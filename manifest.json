@@ -1,0 +1,33 @@
+{
+  "manifestVersion": 2,
+  "id": "comfyui-studio",
+  "name": "出图台 · ComfyUI",
+  "version": "1.0.0",
+  "description": "本地 ComfyUI 出图台：62 条中文风格配方开箱即用（61 张样图随包自带），能认你自己那台 ComfyUI 并自己选线路；配方可自建、可逐条过审。工作流固定在应用内部（Qwen-Image-2.1）。",
+  "entry": "index.js",
+  "icon": "assets/icon.png",
+  "minAppVersion": "0.1013.0",
+  "capabilities": [
+    "app/tools.expose-to-model",
+    "app/ui.clipboard-write"
+  ],
+  "network": {
+    "allowedHosts": ["127.0.0.1", "localhost"],
+    "methods": ["GET", "POST"],
+    "allowLocalhost": true,
+    "defaultTimeoutMs": 60000,
+    "maxResponseBytes": 33554432
+  },
+  "contributes": {
+    "cards": [
+      {
+        "id": "studio",
+        "title": "出图台",
+        "description": "写提示词，本机 ComfyUI 出图；查看队列、历史与参数。",
+        "route": "/panel.html",
+        "cardForm": "flush",
+        "face": { "image": "assets/panel-cover.png" }
+      }
+    ]
+  }
+}

@@ -1,0 +1,2998 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>出图台</title>
+<style>
+/* ─────────────────────────────────────────────────────────────
+   出图台 · 卡片页 v0.3「显影版」
+
+   版式借冲洗机的秩序，不拟物到底：
+     顶灯带   —— 一条细带：左边一盏会呼吸的灯，右边显存与队列
+     曝光区   —— 图是主角。出图时这里是一块暗场，图出来时"显影"
+     工作台面 —— 提示词 / 配方 / 出图，三件，就这三件
+     成品架   —— 横向条带，左右滑
+
+   分区不靠圆角框：全部靠留白、对齐、发丝线。
+   颜色掺暖：底色跟随主题，强调色一律往暖褐方向混。
+   ───────────────────────────────────────────────────────────── */
+/* ── 材质：暗台 + 纸卡（主方案 C，2026-10-12 审美重置） ────────
+   层级不靠字重、不靠颜色，**靠材质**：
+     地面（暗）= 机器与导航；纸面（奶油白）= 内容（图 / 配方 / 成品）。
+   实现手法：变量是继承的 —— 在 .paper 上重声明 --ink/--muted/--line，
+   里面的所有后代自己就翻成了纸面配色。改一处，不用改两百处。 */
+:root{
+  /* 地面（暗台） */
+  --ink:#f0e7d9;
+  --muted:#a99a8e;
+  --faint:#6e625b;
+  --accent:#d59a61;          /* 地面上的暖褐：亮一档才压得住暗底 */
+  --accent-hi:#e8c08a;
+  --lamp:#e8c08a;
+  --glow:color-mix(in srgb,#d59a61 40%,transparent);
+  --warm:#d59a61;
+  --warm-hi:#e8c08a;
+  --warm-deep:#8e552f;
+  --line:#332a26;
+  --hair:#2a2320;
+  --soft:color-mix(in srgb,#f0e7d9 4%,transparent);
+  --bad:#d66c67;
+  --run:#d8848f;
+  --ground:#12100f;
+
+  /* 间距：只用 4 的倍数，不写“差不多” */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:24px; --s7:32px;
+
+  /* 字阶 */
+  --t-display:16px; --l-display:22px;
+  --t-section:11px; --l-section:16px;
+  --t-body:13px;   --l-body:20px;
+  --t-meta:11px;   --l-meta:16px;
+  --t-label:10px;  --l-label:14px;
+  --t-micro:9px;   --l-micro:13px;
+
+  --gut:16px;
+}
+
+/* 纸面：奶油白的“相纸”浮在暗台上。
+   里面重声明一遍颜色角色，后代自动翻成纸面配色 —— 这就是 C 方案的全部秘密。 */
+.paper{
+  --ink:#2a211b;             /* 纸面正文 */
+  --muted:#6b5b4e;
+  --faint:#9a8a7c;
+  --accent:#a9612c;          /* 纸面上的暖褐：深一档才压得住奶油白 */
+  --accent-hi:#8e552f;
+  --line:#dccdb8;
+  --hair:#e6d9c6;
+  --soft:color-mix(in srgb,#2a211b 5%,transparent);
+  --bad:#b8453e;
+  --ground:#f3e9da;
+  background:var(--ground);
+  color:var(--ink);
+}
+
+/* 硬约束：容器与控件一律直角。旧代码里散落的 2--3px 圆角在这里一次性抹平 */
+.wrap,.lamp,.stage,.plate,.field,.shot,.bloom,.prog,.track,.fill,.phead,
+.ticks,.scale,.eta,.progfoot,.cancel,.queue,.desk,.compose textarea,
+.recipe,.card-line,.controls,.grp,.chips,.chip,.adv,.adv-body,
+.fld textarea,.fld input,.sw button,.sw button i,.note,.actions,.ghost,.go,
+.hint,.rack,.strip,.cell,.cell img,.badge,.rackline,.ver,.envbox,.envsum,
+.envrow,.fail,.fail .fraw,.fail .fails button,.lb,.lb img,.lb .cap,.lb .cap .act button,
+.manwrap textarea,.tk,.tk-box,.tk-opt,.envmore{border-radius:0}
+/* 浮起只允许靠材质，不允许靠阴影。唯一例外：键盘焦点环
+   （.lamp 不在名单里 —— 它的 inset 是分隔发丝线，不是浮起） */
+.plate,.field,.shot,.desk,.recipe,.chip,.go,.ghost,.cell,
+.badge,.fail,.envbox,.envsum,.lb .cap .act button{box-shadow:none}
+*:focus-visible{outline:none;box-shadow:0 0 0 2px color-mix(in srgb,#d8848f 28%,transparent)}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:transparent}
+body{font:400 var(--t-body)/var(--l-body) var(--font-ui,system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif);
+  color:var(--ink);background:var(--ground);-webkit-font-smoothing:antialiased}
+.wrap{padding:0 var(--gut) 16px}
+.hidden{display:none !important}
+.num{font-variant-numeric:tabular-nums}
+
+/* ── 顶灯带 ───────────────────────────────────────────────
+   一条横贯整张卡的暖光带：顶沿一道灯管亮线，左端一盏带灯座的呼吸灯。
+   它是这台机器的指示灯，不是一行标题 —— 上一版就是做成了标题，所以没人认出来。
+   满宽出血（负 margin 吃掉 .wrap 的左右内边距），让它真的“横贯”。 */
+.lamp{position:relative;overflow:hidden;
+  display:flex;align-items:center;gap:9px;font-size:11.5px;color:var(--muted);
+  margin:0 calc(var(--gut) * -1);padding:9px var(--gut) 10px;
+  background:
+    linear-gradient(180deg,color-mix(in srgb,var(--warm) 15%,transparent),transparent 82%),
+    color-mix(in srgb,var(--ink) 4%,transparent);
+  box-shadow:inset 0 -1px 0 var(--line),inset 0 1px 0 color-mix(in srgb,var(--ink) 6%,transparent)}
+.lamp::after{ /* 灯管本身：顶沿一条中间亮、两端收的线 */
+  content:"";position:absolute;left:0;right:0;top:0;height:1px;pointer-events:none;z-index:0;
+  background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--warm-hi) 78%,transparent) 18%,
+    color-mix(in srgb,var(--warm-hi) 78%,transparent) 82%,transparent);opacity:.6}
+.lamp::before{ /* 灯座往带子上洒的那片光 */
+  content:"";position:absolute;left:calc(var(--gut) - 30px);top:-16px;width:72px;height:52px;
+  pointer-events:none;z-index:0;
+  background:radial-gradient(closest-side,color-mix(in srgb,var(--warm-hi) 22%,transparent),transparent 74%)}
+.lamp>*{position:relative;z-index:1}
+/* 出图时灯带热起来，连不上时冷下去 —— 带子自己也有状态 */
+.lamp.hot{background:
+  linear-gradient(180deg,color-mix(in srgb,var(--warm) 26%,transparent),transparent 84%),
+  color-mix(in srgb,var(--ink) 5%,transparent)}
+.lamp.hot::after{opacity:.9}
+.lamp.cold{background:
+  linear-gradient(180deg,color-mix(in srgb,var(--bad) 16%,transparent),transparent 84%),
+  color-mix(in srgb,var(--ink) 4%,transparent)}
+
+/* 呼吸灯：一颗灯珠 + 一圈静态灯座（灯罩感就靠这圈） */
+.pulse{width:7px;height:7px;border-radius:50%;flex:none;background:var(--muted);
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--ink) 16%,transparent),
+             0 0 0 5px color-mix(in srgb,var(--ink) 4%,transparent);
+  animation:breathe 4.6s ease-in-out infinite}
+@keyframes breathe{
+  0%,100%{transform:scale(.86);opacity:.62;
+    box-shadow:0 0 0 1px color-mix(in srgb,var(--ink) 16%,transparent),
+      0 0 0 5px color-mix(in srgb,var(--ink) 4%,transparent),0 0 4px 0 var(--glow)}
+  50%{transform:scale(1.12);opacity:1;
+    box-shadow:0 0 0 1px color-mix(in srgb,var(--warm) 42%,transparent),
+      0 0 0 5px color-mix(in srgb,var(--warm) 10%,transparent),0 0 13px 2px var(--glow)}
+}
+.pulse.on{background:var(--lamp)}
+.pulse.off{background:var(--bad);animation:none;opacity:.9;
+  box-shadow:0 0 0 1px color-mix(in srgb,var(--bad) 40%,transparent),
+             0 0 0 5px color-mix(in srgb,var(--bad) 10%,transparent)}
+/* 出图时按采样节奏脉冲：一拍 ≈ 一步 */
+.pulse.run{background:var(--accent-hi);animation:beat var(--stepSec,4.5s) linear infinite}
+@keyframes beat{
+  0%{transform:scale(.82);opacity:.5;
+    box-shadow:0 0 0 1px color-mix(in srgb,var(--warm) 30%,transparent),
+      0 0 0 5px color-mix(in srgb,var(--warm) 6%,transparent),0 0 3px 0 var(--glow)}
+  10%{transform:scale(1.45);opacity:1;
+    box-shadow:0 0 0 1px color-mix(in srgb,var(--warm-hi) 60%,transparent),
+      0 0 0 6px color-mix(in srgb,var(--warm) 16%,transparent),0 0 16px 3px var(--glow)}
+  34%{transform:scale(1);opacity:.82;
+    box-shadow:0 0 0 1px color-mix(in srgb,var(--warm) 40%,transparent),
+      0 0 0 5px color-mix(in srgb,var(--warm) 9%,transparent),0 0 7px 1px var(--glow)}
+  100%{transform:scale(.82);opacity:.5;
+    box-shadow:0 0 0 1px color-mix(in srgb,var(--warm) 30%,transparent),
+      0 0 0 5px color-mix(in srgb,var(--warm) 6%,transparent),0 0 3px 0 var(--glow)}
+}
+.lamp .svc{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  color:color-mix(in srgb,var(--ink) 74%,var(--muted))}
+.lamp .meta{margin-left:auto;flex:none;opacity:.74;letter-spacing:.01em}
+.lamp .meta b{font-weight:600;color:color-mix(in srgb,var(--ink) 76%,var(--muted))}
+
+/* ── 曝光区 ─────────────────────────────────────────────── */
+.stage{position:relative;margin:12px 0 0;padding-bottom:12px;border-bottom:1px solid var(--hair)}
+.stage::before{ /* 台面极轻的暖光，只在顶部 */
+  content:"";position:absolute;left:0;right:0;top:0;height:120px;pointer-events:none;
+  background:radial-gradient(60% 100% at 50% 0,color-mix(in srgb,var(--warm-hi) 9%,transparent),transparent 72%);
+}
+.shot{display:block;width:100%;max-height:420px;object-fit:contain;border-radius:3px;position:relative}
+.shot.dev{opacity:0}
+.shot.dev.lit{animation:develop 1.7s cubic-bezier(.16,.72,.22,1) forwards}
+@keyframes develop{
+  0%{opacity:0;filter:brightness(.10) saturate(.35) contrast(.95)}
+  18%{opacity:.85;filter:brightness(.28) saturate(.5) contrast(.97)}
+  100%{opacity:1;filter:none}
+}
+/* 显影那圈极轻的光晕 */
+.bloom{position:absolute;left:50%;top:50%;width:76%;height:66%;transform:translate(-50%,-50%);
+  pointer-events:none;opacity:0;border-radius:50%;
+  background:radial-gradient(closest-side,color-mix(in srgb,var(--warm-hi) 26%,transparent),transparent 78%)}
+.bloom.lit{animation:bloom 2.1s ease-out forwards}
+@keyframes bloom{0%{opacity:0;transform:translate(-50%,-50%) scale(.72)}
+  26%{opacity:.9}100%{opacity:0;transform:translate(-50%,-50%) scale(1.06)}}
+
+/* 暗场：出图时曝光区的样子 */
+.field{position:relative;display:grid;place-items:center;overflow:hidden;
+  width:100%;aspect-ratio:var(--ar,1 / 1);max-height:min(300px,52vh);min-height:168px;border-radius:3px;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--ink) 7%,transparent),color-mix(in srgb,var(--ink) 2%,transparent))}
+.field::after{ /* 药水里那种缓慢起伏的暗涌 */
+  content:"";position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(38% 30% at 50% 52%,var(--glow),transparent 76%);
+  animation:surge var(--stepSec,4.5s) ease-in-out infinite}
+@keyframes surge{0%,100%{opacity:.16}50%{opacity:.5}}
+.field .fp{position:relative;z-index:1;margin:0;padding:0 22px;text-align:center;
+  font-size:12px;line-height:1.7;color:color-mix(in srgb,var(--ink) 62%,transparent);
+  max-height:6.6em;overflow:hidden;overflow-wrap:anywhere}
+.field .fp em{display:block;font-style:normal;font-size:10.5px;letter-spacing:.16em;
+  color:color-mix(in srgb,var(--muted) 80%,transparent);margin-bottom:7px}
+
+/* 空台面 */
+.plate{display:grid;place-items:center;min-height:150px;padding:26px 20px;text-align:center;
+  border-radius:3px;background:linear-gradient(180deg,color-mix(in srgb,var(--ink) 4%,transparent),transparent)}
+.plate p{margin:0;font-size:12px;color:var(--muted);line-height:1.9}
+.plate p b{display:block;font-weight:500;font-size:12.5px;color:color-mix(in srgb,var(--ink) 68%,var(--muted));margin-bottom:3px}
+
+/* ── 进度带 ─────────────────────────────────────────────── */
+.prog{margin:11px 0 0}
+/* 轨道做成一道凹槽（两道内阴影），填充的右端给一个亮头 —— 一眼看得见进度落在哪。
+   不给圆角：这台子从头到尾是干脆的直角。 */
+.track{position:relative;height:13px;border-radius:2px;overflow:hidden;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--ink) 13%,transparent),color-mix(in srgb,var(--ink) 4%,transparent));
+  box-shadow:inset 0 1px 0 color-mix(in srgb,var(--ink) 16%,transparent),inset 0 -1px 0 color-mix(in srgb,var(--ink) 7%,transparent)}
+.ticks{position:absolute;inset:0;pointer-events:none;opacity:.9;
+  background-image:
+    linear-gradient(90deg,var(--line) 0 1px,transparent 1px),
+    linear-gradient(90deg,var(--hair) 0 1px,transparent 1px);
+  background-size:calc(100% / var(--majors,4)) 100%,calc(100% / var(--fines,20)) 100%;
+  background-repeat:repeat-x}
+.ticks.over{ /* 步格继续盖在进度上，否则填过的地方刻度就丢了 */
+  background-image:linear-gradient(90deg,color-mix(in srgb,var(--ink) 18%,transparent) 0 1px,transparent 1px);
+  background-size:calc(100% / var(--majors,4)) 100%;opacity:.5}
+.fill{position:absolute;left:0;top:0;bottom:0;width:0;
+  background:var(--accent);
+  transition:width .7s cubic-bezier(.3,.8,.3,1);overflow:hidden}
+/* 流光下线：平直色带 + 亮头已经够读，流动的高光只是装饰 */
+.fill i{display:none}
+.fill i{ /* 流光 */
+  position:absolute;top:0;bottom:0;width:38%;mix-blend-mode:screen;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.72),transparent);
+  animation:sheen 1.9s linear infinite}
+@keyframes sheen{0%{transform:translateX(-110%)}100%{transform:translateX(320%)}}
+.fill.rest i{animation:none;opacity:0}
+/* 亮头：填充的右端。没它只能看出"进了一半"，看不出"到这一步了"。 */
+.phead{position:absolute;top:-1px;bottom:-1px;width:2px;border-radius:1px;pointer-events:none;opacity:0;
+  background:color-mix(in srgb,var(--accent-hi) 92%,#fff);
+  box-shadow:0 0 7px 1px color-mix(in srgb,var(--accent-hi) 78%,transparent);
+  transition:left .7s cubic-bezier(.3,.8,.3,1),opacity .25s}
+.phead.on{opacity:1}
+/* 过格：每跨过一个数字刻度闪一下就灭 —— 时间感靠这个，不靠数字 */
+@keyframes mtick{0%{opacity:.9;transform:scaleY(1)}100%{opacity:0;transform:scaleY(1.7)}}
+.mtick{position:absolute;top:0;bottom:0;width:1px;pointer-events:none;
+  background:color-mix(in srgb,var(--accent-hi) 85%,transparent);animation:mtick .5s ease-out forwards}
+/* 体检面板：顶上一条结论，细节折进去。人看结论，排查的人看细节。 */
+.envbox{margin-top:10px;border-top:1px solid var(--hair);padding-top:8px}
+.envsum{margin:0;font-size:11.5px;line-height:1.6;color:var(--muted);cursor:pointer;overflow-wrap:anywhere}
+.envsum b{color:var(--ink);font-weight:500}
+.envsum .cr{color:var(--muted);opacity:.6}
+.envbody{margin-top:6px}
+.envrow{margin:0 0 7px;font-size:11px;line-height:1.65;color:var(--muted);overflow-wrap:anywhere}
+.envrow b{display:block;color:color-mix(in srgb,var(--ink) 70%,var(--muted));font-weight:500;
+  font-size:10.5px;letter-spacing:.1em;margin-bottom:2px}
+.envrow .ln{display:block;padding-left:8px;text-indent:-8px}
+.envrow .ok{color:color-mix(in srgb,var(--accent-hi) 70%,var(--ink))}
+.envrow .no{color:color-mix(in srgb,var(--bad) 76%,var(--ink))}
+.envmore{border:none;background:none;color:var(--muted);font:inherit;font-size:10.5px;
+  letter-spacing:.08em;cursor:pointer;padding:0;text-decoration:underline;opacity:.75}
+.envmore:hover{color:var(--ink)}
+/* 失败态：一份可读的报告，不是一行 toast */
+.fail{display:grid;gap:7px;padding:14px 16px;text-align:left;
+  border-left:2px solid color-mix(in srgb,var(--bad) 62%,transparent);
+  background:linear-gradient(180deg,color-mix(in srgb,var(--bad) 7%,transparent),transparent)}
+.fail p{margin:0;font-size:12px;line-height:1.6;color:color-mix(in srgb,var(--ink) 72%,var(--muted))}
+.fail .fraw{margin:0;max-height:88px;overflow:auto;font:inherit;font-size:10.5px;line-height:1.55;
+  color:var(--muted);white-space:pre-wrap;overflow-wrap:anywhere;padding:6px 8px;
+  border:1px solid var(--line);background:color-mix(in srgb,var(--ink) 4%,transparent)}
+.fail .fails{display:flex;gap:4px;flex-wrap:wrap}
+.fail .fails button{border:1px solid var(--line);background:transparent;color:var(--muted);
+  font:inherit;font-size:11px;letter-spacing:.06em;padding:3px 9px;border-radius:2px;cursor:pointer}
+.fail .fails button:hover{color:var(--ink);border-color:color-mix(in srgb,var(--accent) 55%,var(--line))}
+/* 手动复制的退路：两条自动路都被壳子挡住时，把文本摊出来让她自己按 Ctrl+C */
+.manwrap{pointer-events:auto;margin-top:7px}
+.manwrap textarea{width:100%;height:56px;resize:vertical;font:inherit;font-size:11px;line-height:1.5;
+  color:#e9e2ee;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.22);padding:6px 8px}
+.scale{position:relative;height:12px;margin-top:5px}
+.scale span{position:absolute;top:0;font-size:9.5px;letter-spacing:.06em;color:var(--muted);
+  opacity:.6;transform:translateX(-50%)}
+.scale span.e{transform:none}
+.scale span.s{transform:translateX(-100%)}
+.eta{margin:4px 0 0;font-size:11.5px;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap}
+.eta b{color:var(--accent-hi);font-weight:600}
+.eta .sep{opacity:.35}
+/* 取消：两击确认。第一下只是上膛 —— 误触一次会毁掉一张跑了三分钟的图。 */
+.progfoot{display:flex;align-items:baseline;gap:10px;margin-top:4px}
+.progfoot .eta{margin:0;flex:1 1 auto;min-width:0}
+.cancel{flex:none;border:1px solid color-mix(in srgb,var(--bad) 40%,var(--line));background:transparent;
+  color:color-mix(in srgb,var(--bad) 84%,var(--ink));font:inherit;font-size:11px;letter-spacing:.06em;
+  padding:3px 10px;border-radius:2px;cursor:pointer;white-space:nowrap;
+  transition:background .16s,color .16s,border-color .16s}
+.cancel:hover{background:color-mix(in srgb,var(--bad) 13%,transparent)}
+.cancel.arm{background:color-mix(in srgb,var(--bad) 22%,transparent);color:#fff;
+  border-color:color-mix(in srgb,var(--bad) 72%,transparent)}
+.cancel:disabled{opacity:.5;cursor:default}
+
+/* ── 排队一行 ───────────────────────────────────────────── */
+.queue{margin:10px 0 0;font-size:11.5px;color:var(--muted);display:flex;gap:8px;
+  align-items:baseline;min-width:0}
+.queue .tag{flex:none;letter-spacing:.14em;opacity:.7;font-size:10.5px}
+.queue .q{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ── 工作台面：提示词 / 配方 / 出图 ───────────────────────
+   它是一块"相纸"：奶油白底，浮在暗台上。 */
+.desk{margin:var(--s4) 0 0}
+.desk.paper{padding:var(--s4);border:1px solid var(--line)}
+.compose{display:block}
+.compose textarea{display:block;width:100%;min-height:52px;max-height:132px;resize:none;overflow:auto;
+  padding:8px 2px 9px;border:none;border-bottom:1px solid var(--line);background:transparent;
+  color:var(--ink);font:inherit;font-size:13.5px;line-height:1.7}
+.compose textarea:focus{outline:none;border-bottom-color:var(--accent)}
+.compose textarea::placeholder{color:var(--muted);opacity:.72}
+
+/* 配方条：默认是「这张用了什么」；点开才变成可改的控件 */
+.recipe{margin:9px 0 0}
+.card-line{display:flex;align-items:baseline;gap:8px;min-width:0;font-size:11.5px;color:var(--muted);
+  padding:5px 0 0}
+.card-line .who{flex:none;letter-spacing:.14em;font-size:10.5px;opacity:.72}
+.card-line .name{flex:none;color:color-mix(in srgb,var(--accent-hi) 72%,var(--ink))}
+.card-line.sub{display:block;padding:2px 0 0;font-size:11px;opacity:.9;min-width:0;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+.card-line .toggle{margin-left:auto;flex:none;border:none;background:none;color:var(--muted);
+  font:inherit;font-size:11px;cursor:pointer;padding:2px 0 2px 8px;letter-spacing:.08em}
+.card-line .toggle:hover{color:var(--accent-hi)}
+
+.controls{padding:12px 0 2px;border-top:1px solid var(--hair);margin-top:10px}
+.grp{display:grid;grid-template-columns:38px 1fr;gap:4px 8px;align-items:start;margin:0 0 10px}
+.grp>.lbl{font-size:10.5px;letter-spacing:.14em;color:var(--muted);opacity:.74;padding-top:6px}
+.chips{display:flex;gap:6px;flex-wrap:wrap;min-width:0}
+.chip{border:1px solid var(--line);background:transparent;color:var(--muted);
+  font:inherit;font-size:11.5px;line-height:1.4;padding:4px 9px;border-radius:2px;cursor:pointer;
+  white-space:nowrap;transition:color .16s,border-color .16s,background .16s}
+.chip:hover{color:var(--ink);border-color:color-mix(in srgb,var(--accent) 55%,var(--line))}
+.chip.on{color:color-mix(in srgb,var(--accent-hi) 82%,var(--ink));
+  border-color:color-mix(in srgb,var(--accent) 70%,transparent);
+  background:color-mix(in srgb,var(--accent) 13%,transparent)}
+.chip .sub{display:block;font-size:9.5px;opacity:.66;letter-spacing:.02em}
+.chip.on .sub{opacity:.8}
+.chip .flag{font-size:9.5px;opacity:.6;margin-left:3px}
+
+/* 风格墙废了（2026-10-12）。改法是：控件区不再铺 63 张卡，
+   改成配方条上的一颗「浏览」——点开进配方库（.libsec）。
+   理由：63 张两列铺在输入区里是 32 行，把「出图」按钮推到看不见的地方；
+   而挑风格要看图，那该有一块自己的地方，不该塞在参数里。 */
+
+/* 高级区：负向词和结构实化都塞在这儿，默认折叠 */
+.adv{margin-top:2px}
+.adv>.open{border:none;background:none;color:var(--muted);font:inherit;font-size:11px;
+  cursor:pointer;padding:2px 0;letter-spacing:.08em}
+.adv>.open:hover{color:var(--accent-hi)}
+.adv-body{padding:10px 0 2px}
+.fld{display:block;margin:0 0 10px}
+.fld>span{display:block;font-size:10.5px;letter-spacing:.12em;color:var(--muted);opacity:.74;margin-bottom:5px}
+.fld textarea{width:100%;min-height:58px;resize:vertical;padding:7px 8px;border-radius:2px;
+  border:1px solid var(--line);background:var(--soft);color:var(--ink);font:inherit;font-size:11.5px;line-height:1.6}
+.fld textarea:focus{outline:none;border-color:var(--accent)}
+.sw{display:flex;align-items:center;gap:9px}
+.sw button{flex:none;width:36px;height:19px;border-radius:2px;border:1px solid var(--line);
+  background:var(--soft);position:relative;cursor:pointer;padding:0}
+.sw button i{position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:2px;
+  background:var(--muted);transition:transform .18s,background .18s}
+.sw button.on{border-color:color-mix(in srgb,var(--accent) 62%,transparent);
+  background:color-mix(in srgb,var(--accent) 18%,transparent)}
+.sw button.on i{transform:translateX(17px);background:var(--accent-hi)}
+.sw button:disabled{opacity:.42;cursor:default}
+.sw em{font-style:normal;font-size:11.5px;color:var(--muted)}
+.sw em b{color:var(--ink);font-weight:500}
+.note{margin:0;font-size:10.5px;color:var(--muted);opacity:.66;line-height:1.7}
+
+.actions{display:flex;gap:8px;align-items:stretch;margin-top:12px}
+.go{flex:1;min-width:0;height:36px;padding:0 14px;border:1px solid var(--accent);
+  /* 单色实填充，不用渐变、不用阴影 —— 渐变加阴影 = 通用 SaaS 主按钮，
+     不像暗房台面上的实体拨杆。
+     字用近黑不用白：白字在这个亮度的褐上只有 ~3:1，小字不够看。 */
+  background:var(--accent);
+  color:#24170f;font:inherit;font-size:13px;font-weight:600;cursor:pointer;letter-spacing:.02em;
+  transition:filter .16s,opacity .16s;
+  display:flex;align-items:center;justify-content:center;gap:8px;overflow:hidden}
+.go:hover:not(:disabled){filter:brightness(1.06)}
+.go:disabled{opacity:.5;cursor:default}
+.go small{font-size:10.5px;font-weight:400;opacity:.86;letter-spacing:0}
+.ghost{flex:none;height:36px;padding:0 12px;border:1px solid var(--line);
+  background:transparent;color:var(--muted);font:inherit;font-size:11.5px;cursor:pointer;
+  white-space:nowrap;transition:color .16s,border-color .16s}
+.ghost:hover:not(:disabled){color:var(--accent);border-color:var(--accent)}
+.ghost:disabled{opacity:.34;cursor:default}
+.hint{margin:8px 0 0;font-size:11px;color:var(--muted);min-height:15px}
+.hint.bad{color:var(--bad)}
+
+/* ── 成品架 ─────────────────────────────────────────────── */
+.rack{margin:var(--s5) 0 0}
+.rack.paper{padding:var(--s4);border:1px solid var(--line)}
+.rack h3{font-size:10.5px;letter-spacing:.16em;color:var(--muted);margin:0 0 9px;font-weight:500;opacity:.8}
+.rack h3 span{opacity:.6;letter-spacing:.04em}
+.strip{display:flex;gap:7px;overflow-x:auto;overflow-y:hidden;padding:0 0 7px;scroll-snap-type:x proximity}
+.strip::-webkit-scrollbar{height:5px}
+.strip::-webkit-scrollbar-thumb{background:color-mix(in srgb,var(--ink) 16%,transparent);border-radius:3px}
+.strip::-webkit-scrollbar-track{background:transparent}
+.cell{position:relative;flex:none;width:88px;height:88px;border-radius:3px;overflow:hidden;
+  scroll-snap-align:start;cursor:zoom-in;background:var(--soft)}
+.cell img{width:100%;height:100%;object-fit:cover;display:block;opacity:0;transition:opacity .5s ease,filter .5s ease;
+  filter:brightness(.9)}
+.cell img.ready{opacity:1;filter:none}
+/* ⚠ badge 只借用 .fail 的颜色（.badge.fail），**不能蹭上 .fail 块本身的样式**：
+   `.fail` 那条是失败报告的方块（display:grid / gap:7px / border-left:2px 红线），
+   而 .badge.fail 选择器的优先度只盖住了 color 与 background ——
+   display/gap/border-left 会漏到成品架那一小条上，给失败缩略图多出一条红线。
+   （这是 2026-10-13 新加的 audit 规则查出来的：.fail 既当头部又被当部件。） */
+.cell .badge{position:absolute;left:0;right:0;bottom:0;padding:10px 5px 3px;font-size:9.5px;letter-spacing:.03em;
+  color:#f2e7d8;background:linear-gradient(transparent,rgba(10,6,4,.78));
+  display:block;gap:0;border-left:0;text-align:center;
+  font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 失败小条。类名用 is-fail 不叫 fail：`.cell .badge.fail` 会让 audit 把 fail 报成
+   “既当头部又被当部件”—— 而那是合法用法，报了就是噪声，噪声多了就没人看警报了。 */
+.cell .badge.is-fail{color:#ffd9d5;background:linear-gradient(transparent,rgba(60,10,8,.8))}
+.cell:hover{box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 62%,transparent) inset}
+/* 悬停看「这张是什么」：信息挪到成品架下面单开一行 —— 既不遮图，也不掉布局。
+   不在悬停时显示最新那张，所以这行永远不会是空的。 */
+.rackline{margin:3px 0 0;min-height:33px;overflow:hidden}
+.rackline .t{display:block;font-size:11.5px;line-height:1.5;
+  color:color-mix(in srgb,var(--ink) 68%,var(--muted));
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* 参数行允许折成两行而不是省略：名字一长，被挤掉的总是末尾那个耗时，
+   而那是这行最该看到的之一。预留两行高度，所以折行不会掉布局。 */
+.rackline .d{display:block;margin-top:1px;font-size:10.5px;line-height:1.5;color:var(--muted);
+  opacity:.86;overflow:hidden;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.none{font-size:11.5px;color:var(--muted);opacity:.62;margin:0}
+.ver{margin:14px 0 0;padding-top:9px;border-top:1px solid var(--hair);
+  font-size:10.5px;color:color-mix(in srgb,var(--muted) 90%,transparent);opacity:.5;text-align:right;letter-spacing:.04em}
+
+/* ── 大图：滚轮缩放 + 拖动平移 + 双击复位 ───────────────── */
+.lb{position:fixed;inset:0;z-index:99;display:none;background:rgba(6,4,8,.968);overflow:hidden}
+.lb.on{display:block}
+.lb img{position:absolute;left:50%;top:50%;max-width:none;max-height:none;
+  transform-origin:center center;cursor:grab;user-select:none;-webkit-user-drag:none;will-change:transform}
+.lb img.drag{cursor:grabbing}
+.lb .cap{position:absolute;left:0;right:0;bottom:0;margin:0;padding:36px 18px 12px;
+  font-size:11.5px;line-height:1.72;color:#c9c0cc;text-align:center;overflow-wrap:anywhere;
+  background:linear-gradient(transparent,rgba(6,4,8,.94));pointer-events:none}
+.lb .cap b{color:#fff;font-weight:600}
+.lb .cap i{display:block;font-style:normal;opacity:.62;margin-top:3px}
+.lb .cap .act{pointer-events:auto;margin-top:8px;display:flex;justify-content:center;align-items:center;flex-wrap:wrap}
+.lb .cap .act button{pointer-events:auto;border:none;background:none;color:color-mix(in srgb,var(--warm-hi) 80%,#fff);
+  font:inherit;font-size:11px;letter-spacing:.06em;cursor:pointer;padding:3px 9px}
+.lb .cap .act button+button{border-left:1px solid rgba(255,255,255,.14)}
+.lb .cap .act button:hover{text-decoration:underline}
+@media (max-width:380px){
+  :root{--gut:12px}
+  .grp{grid-template-columns:1fr;gap:2px}
+  .grp>.lbl{padding-top:0}
+  .cell{width:76px;height:76px}
+}
+/* ── 审美重置收尾（2026-10-12） ──────────────────────────
+   放在样式表末尾，保证盖得住前面的写法。 */
+/* 曝光区 = 图像槽位。给它一道边界，否则它跟暗地面糊成一片，
+   看不出“现在在看的到底是哪一块”。 */
+.stage{border:1px solid var(--line)}
+/* 进度轨道：留一道发丝边，否则未走完的那一段跟暗地面糊在一起，看不出总长 */
+.track{border:1px solid var(--line)}
+/* 主按钮的加载态：保持尺寸，不转圈 */
+.go:disabled{background:#584239;border-color:#584239;color:#a49387}
+/* 分区名统一字阶（曝光 / 配方 / 成品） */
+.rack h3,.envrow b{font-size:var(--t-section);letter-spacing:.14em}
+.ver{font-size:var(--t-micro);color:var(--faint)}
+/* 分区名统一字阶（曝光 / 配方 / 成品） */
+.rack h3,.envrow b{font-size:var(--t-section);letter-spacing:.14em}
+.ver{font-size:var(--t-micro);color:var(--faint)}
+
+/* ── 配方库（v2 · 图优先，2026-10-12） ─────────────────────────
+   规格：_studio_preview/设计_前端审美重置.md 的 v2 一节。四条不许改：
+     ① 导航（大类 / 子类 / 搜索 / 筛选）留在暗色地面 —— 它们是机器的旋钮；
+        结果网格落在一块纸上。层级靠材质，不靠字重。
+     ② 三列，单格约 121px。90px 只能读名字（那正是被否掉的数据库感），
+        189px 只排得下两列、61 条要 31 行滚不到底。
+     ③ 导航只收窄结果，网格始终在场，没有必须逐层走完的层级。
+     ④ 点一格原地换成左右对比，不是进详情页。 */
+.libsec{margin:var(--s6) 0 0}
+.libhead{display:flex;align-items:baseline;gap:8px;margin:0 0 10px}
+.libhead h3{margin:0;font-size:15px;line-height:22px;font-weight:600;color:var(--ink)}
+.libcnt{font-size:var(--t-label);color:var(--faint);font-variant-numeric:tabular-nums}
+.libx{margin-left:auto;flex:none;border:none;background:none;color:var(--muted);font:inherit;
+  font-size:var(--t-meta);cursor:pointer;padding:2px 0;letter-spacing:.06em}
+.libx:hover{color:var(--accent-hi)}
+.cats{display:flex;gap:14px;overflow-x:auto;white-space:nowrap;margin:0;
+  border-bottom:1px solid var(--line);scrollbar-width:none}
+.cats::-webkit-scrollbar{display:none}
+.cats button{flex:none;border:none;background:none;font:inherit;font-size:var(--t-meta);
+  color:var(--faint);cursor:pointer;padding:0 0 7px;white-space:nowrap}
+.cats button:hover{color:var(--ink)}
+.cats button.on{color:var(--ink);border-bottom:2px solid var(--accent);margin-bottom:-1px}
+.subcats{display:flex;gap:6px;overflow-x:auto;white-space:nowrap;margin:9px 0 0;scrollbar-width:none}
+.subcats::-webkit-scrollbar{display:none}
+.subcats button{flex:none;border:1px solid var(--line);background:transparent;font:inherit;
+  font-size:var(--t-label);color:var(--muted);cursor:pointer;padding:3px 8px;white-space:nowrap}
+.subcats button:hover{color:var(--ink);border-color:color-mix(in srgb,var(--accent) 55%,var(--line))}
+.subcats button.on{border-color:var(--accent);color:var(--accent-hi);
+  background:color-mix(in srgb,var(--accent) 13%,transparent)}
+.srow{display:flex;align-items:center;gap:6px;margin:10px 0 0}
+.srow input{flex:1;min-width:0;height:28px;border:none;border-bottom:1px solid var(--line);
+  background:transparent;color:var(--ink);font:inherit;font-size:var(--t-meta);padding:0 2px;outline:none}
+.srow input:focus{border-bottom-color:var(--accent-hi)}
+.srow input::placeholder{color:var(--faint)}
+.lchip{flex:none;height:28px;padding:0 8px;border:1px solid var(--line);background:transparent;
+  color:var(--muted);font:inherit;font-size:var(--t-label);cursor:pointer;white-space:nowrap}
+.lchip:hover{color:var(--ink);border-color:color-mix(in srgb,var(--accent) 55%,var(--line))}
+.lchip.on{border-color:var(--accent);color:var(--accent-hi);
+  background:color-mix(in srgb,var(--accent) 13%,transparent)}
+.lclear{flex:none;border:none;background:none;color:var(--muted);font:inherit;font-size:var(--t-label);
+  cursor:pointer;padding:2px 0;text-decoration:underline}
+.lclear:hover{color:var(--ink)}
+.filts{margin:10px 0 0;padding:10px 0 0;border-top:1px solid var(--line)}
+.frow{display:flex;align-items:center;gap:8px;margin:0 0 7px;min-width:0}
+.frow .fname{flex:none;width:52px;font-size:var(--t-label);color:var(--faint);letter-spacing:.06em}
+.frow .fvals{flex:1;min-width:0;display:flex;gap:5px;overflow-x:auto;scrollbar-width:none}
+.frow .fvals::-webkit-scrollbar{display:none}
+.frow .fvals button{flex:none;height:26px;padding:0 8px;border:1px solid var(--line);background:transparent;
+  color:var(--muted);font:inherit;font-size:var(--t-label);cursor:pointer;white-space:nowrap}
+.frow .fvals button em{font-style:normal;opacity:.5;margin-left:3px;font-variant-numeric:tabular-nums}
+.frow .fvals button:hover{color:var(--ink)}
+.frow .fvals button.on{border-color:var(--accent);color:var(--accent-hi);
+  background:color-mix(in srgb,var(--accent) 13%,transparent)}
+.frow .fvals button.on em{opacity:.7}
+
+/* 结果：一块纸；组头粘顶，跨到新子类时第一眼知道自己在哪。
+   ⚠️ 粘顶要求祖先链上没有 overflow:hidden，别给 .libpaper 加。 */
+.libpaper{padding:4px 4px 10px;border:1px solid var(--line)}
+.lgroup{margin:0}
+.ghead{display:flex;align-items:baseline;gap:8px;padding:7px 4px 5px;margin:0;
+  position:sticky;top:0;z-index:2;background:var(--ground);
+  font-size:var(--t-label);letter-spacing:.06em;color:var(--faint)}
+.ghead .glabel{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ghead .gcount{margin-left:auto;flex:none;font-variant-numeric:tabular-nums}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:4px 0 0}
+.tile{display:block;width:100%;text-align:left;padding:4px;border:1px solid var(--line);
+  background:transparent;color:var(--ink);font:inherit;cursor:pointer;transition:border-color .16s}
+.tile:hover{border-color:var(--accent)}
+/* 选中用 2px 边框，靠 padding 从 4 降到 3 抵消 —— 网格不跳 */
+.tile.cur{border-width:2px;border-color:var(--accent);padding:3px}
+.pic{position:relative;display:block;width:100%;aspect-ratio:1 / 1;border:1px solid var(--line);overflow:hidden;
+  background:color-mix(in srgb,var(--ink) 7%,transparent)}
+.pic img,.cmpimg img{display:block;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .3s}
+.pic img.ready,.cmpimg img.ready{opacity:1}
+/* 没样图：同尺寸纯色占位、排组尾、不隐藏 —— 隐了会让人以为没这条配方 */
+.pic.empty{display:grid;place-items:center;border-style:dashed;background:transparent}
+.pic.empty em{font-style:normal;font-size:var(--t-micro);color:var(--faint);letter-spacing:.04em;
+  text-align:center;padding:0 4px;white-space:pre-line;line-height:1.5}
+/* 半后处理角标：提示词只做了一半，另一半得靠后处理（像素化/锁色板/去色…）。
+   图角上只标一个词，完整说明写在点开的对比视图里（那儿有地方写清用哪个脚本）。 */
+.pic .semi{position:absolute;left:0;bottom:0;padding:1px 4px;font-size:8px;line-height:12px;
+  background:var(--ground);color:var(--accent);letter-spacing:.04em}
+.tile .nm{display:block;margin-top:5px;font-size:var(--t-label);line-height:14px;color:var(--ink);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tile .st{display:block;margin-top:1px;font-size:var(--t-micro);line-height:12px;color:var(--faint);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tile .st.ok{color:var(--accent)}
+.tile .st.no{color:color-mix(in srgb,var(--bad) 82%,var(--faint))}
+.libempty{margin:0;padding:16px 6px;font-size:var(--t-meta);line-height:1.7;color:var(--faint)}
+.libempty b{display:block;color:var(--ink);font-weight:500;margin-bottom:3px}
+
+/* 「我的」角标：自定义配方。和内置那 60 条在同一张纸上，靠这个角标认得出谁是谁 ——
+   自定义不许和内置混得长一个样，否则「未实测」这套讲法就废了。 */
+.pic .mine{position:absolute;left:0;top:0;padding:1px 4px;font-size:8px;line-height:12px;
+  background:var(--ground);color:var(--accent);letter-spacing:.04em}
+/* 过审判定角标（右上）：像 / 不像 / 说不好。没判过就不标 ——
+   缺省状态不该被伪装成一个判定。 */
+.pic .verd{position:absolute;right:0;top:0;padding:1px 4px;font-size:8px;line-height:12px;
+  background:var(--ground);letter-spacing:.04em}
+.pic .verd.ok{color:color-mix(in srgb,var(--accent) 80%,var(--ink))}
+.pic .verd.no{color:var(--bad)}
+.pic .verd.unsure{color:var(--faint)}
+/* 新建那格：虚线、不进组尾、永远在第一格 */
+.tile.newcard{border-style:dashed}
+.tile.newcard .pic{display:grid;place-items:center;border-style:dashed;background:transparent}
+.tile.newcard .pic em{font-style:normal;font-size:11px;line-height:1.5;color:var(--muted);text-align:center}
+.tile.newcard .nm{color:var(--muted)}
+
+/* 新建 / 改 一条自定义配方：就地展开，和对比视图一样是「原地换」 */
+.nform{margin:0}
+.nform .fl{display:block;margin:0 0 12px}
+/* ⚠ 这一格叫 fklb 而不是 lb：`lb` 已经是大图灯箱那个类的名字
+   （`.lb{position:fixed;inset:0;display:none}`）。同名不会被报错，
+   但 position:fixed 会静静跟着跑到表单标签上 —— 这个坑咬过三次了。 */
+.nform .fl .fklb{display:block;font-size:var(--t-label);letter-spacing:.12em;color:var(--faint);margin-bottom:5px}
+.nform .fl .hintline{margin:4px 0 0;font-size:var(--t-label);line-height:1.6;color:var(--faint)}
+.nform input,.nform textarea{display:block;width:100%;padding:7px 8px;border:1px solid var(--line);
+  background:transparent;color:var(--ink);font:inherit;font-size:12px;line-height:1.6}
+.nform textarea{min-height:66px;resize:vertical}
+.nform input:focus,.nform textarea:focus{outline:none;border-color:var(--accent)}
+.nform .fbtns{display:flex;gap:8px;margin:0}
+.nform .fbtns .main{flex:1;min-width:0;height:32px;border:1px solid var(--accent);background:var(--accent);
+  color:#24170f;font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.nform .fbtns .main:hover:not(:disabled){filter:brightness(1.06)}
+.nform .fbtns .main:disabled{background:#584239;border-color:#584239;color:#a49387;cursor:default}
+.nform .fbtns .alt{flex:none;height:32px;padding:0 12px;border:1px solid var(--line);background:transparent;
+  color:var(--muted);font:inherit;font-size:11.5px;cursor:pointer;white-space:nowrap}
+.nform .fbtns .alt:hover:not(:disabled){color:var(--ink)}
+/* 样图底句那一栏：默认模式下像个“预演框”（虚线），锁住之后才变成一个真的输入框 */
+.nform .pvbox{padding:7px 8px;border:1px dashed var(--line);color:var(--muted);font-size:12px;line-height:1.6}
+.nform .pmrow{display:flex;gap:6px;margin-top:7px}
+.nform .pmrow button{height:28px;padding:0 10px;border:1px solid var(--line);background:transparent;
+  color:var(--muted);font:inherit;font-size:11px;cursor:pointer;white-space:nowrap}
+.nform .pmrow button:hover{color:var(--ink);border-color:color-mix(in srgb,var(--accent) 55%,var(--line))}
+.nform .ferr{margin:10px 0 0;font-size:11px;line-height:1.6;color:var(--bad);min-height:0}
+.nform .ferr:empty{display:none}
+
+/* 对比：点开一张图的自然结果，不是从表格进详情页 */
+.cmpback{border:none;background:none;color:var(--muted);font:inherit;font-size:var(--t-meta);
+  cursor:pointer;padding:2px 0;text-align:left;white-space:normal}
+.cmpback:hover{color:var(--ink)}
+.cmpname{margin:10px 0 0;font-size:14px;line-height:20px;font-weight:600;color:var(--ink)}
+.cmpsub{margin:4px 0 10px;font-size:var(--t-label);line-height:1.6;color:var(--faint)}
+.cmpgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.cmpgrid figure{margin:0;min-width:0}
+/* 样图本体是 512²，所以比对框也用方的。规格里写的是 16:10，
+   那个框对 1:1 素材只有两个下场：裁掉三成高度，或把图缩在中间留一圈空。
+   规格那句「不要用 1:1 强行填满高度」说的是别为了填高而裁图 ——
+   这里正好相反：跟素材同形，什么都不裁。 */
+.cmpimg{position:relative;aspect-ratio:1 / 1;border:1px solid var(--line);overflow:hidden;
+  background:color-mix(in srgb,var(--ink) 7%,transparent);display:grid;place-items:center}
+.cmpimg.empty{border-style:dashed;background:transparent}
+.cmpimg em{font-style:normal;font-size:var(--t-micro);color:var(--faint);text-align:center;
+  padding:0 8px;line-height:1.6}
+.cmpgrid figcaption{margin-top:5px;font-size:var(--t-label);color:var(--muted)}
+.cmpact{display:flex;gap:8px;margin:12px 0 0}
+.cmpuse{flex:1;min-width:0;height:32px;border:1px solid var(--accent);background:var(--accent);
+  color:#24170f;font:inherit;font-size:12px;font-weight:600;cursor:pointer}
+.cmpuse:hover:not(:disabled){filter:brightness(1.06)}
+.cmpuse:disabled{background:#584239;border-color:#584239;color:#a49387;cursor:default}
+.cmpexit{flex:none;height:32px;padding:0 12px;border:1px solid var(--line);background:transparent;
+  color:var(--muted);font:inherit;font-size:11.5px;cursor:pointer}
+.cmpexit:hover{color:var(--ink)}
+/* 自定义那三个次动作：跑样图 / 改 / 删。
+   跑样图刻意**不用实填充** —— 一块纸上只能有一个主按钮（那是「用这条配方」），
+   两个实色块并排就看不出哪个是主动作了。 */
+.cmpact.sec{margin-top:6px}
+.cmpact .soft{flex:1;min-width:0;height:32px;border:1px solid var(--accent);background:transparent;
+  color:var(--accent);font:inherit;font-size:12px;cursor:pointer}
+.cmpact .soft:hover:not(:disabled){background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.cmpact .soft:disabled{opacity:.55;cursor:default}
+/* 选中的那一档（过审判定就是一颗三选一） */
+.cmpact .soft.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 16%,transparent);
+  color:var(--accent);font-weight:600}
+.cmpact .danger{flex:none;height:32px;padding:0 12px;background:transparent;
+  border:1px solid color-mix(in srgb,var(--bad) 45%,var(--line));
+  color:color-mix(in srgb,var(--bad) 88%,var(--ink));font:inherit;font-size:11.5px;cursor:pointer;white-space:nowrap}
+.cmpact .danger.arm{background:color-mix(in srgb,var(--bad) 22%,transparent);color:#fff;
+  border-color:color-mix(in srgb,var(--bad) 72%,transparent)}
+.cmpact .danger:hover:not(.arm){background:color-mix(in srgb,var(--bad) 12%,transparent)}
+.ps{margin:12px 0 0}
+.ps h5{margin:0 0 5px;font-size:var(--t-label);letter-spacing:.1em;font-weight:600;color:var(--faint)}
+.ps .txt{padding:7px 8px;border-left:2px solid var(--accent);
+  background:color-mix(in srgb,var(--ink) 6%,transparent);
+  font-size:11px;line-height:17px;color:var(--muted);overflow-wrap:anywhere}
+.ps .txt.neg{border-left-color:var(--faint)}
+.ps .txt del{color:var(--bad);text-decoration-color:var(--bad);opacity:.85}
+.ps .off{margin:0 0 5px;font-size:var(--t-micro);color:var(--bad);letter-spacing:.04em}
+.psnote{margin:8px 0 0;font-size:var(--t-label);line-height:1.6;color:var(--faint)}
+
+@media (max-width:380px){
+  .grid{grid-template-columns:repeat(2,1fr)}
+  .frow .fname{width:44px}
+  .tile{padding:3px}
+  .tile.cur{padding:2px}
+}
+
+/* 配方条右侧的两颗：进配方库 / 改参数。
+   挑风格要看图，所以它不该塞在参数里；「改」只管画幅、步数、种子、高级。 */
+.card-line .rbrow{margin-left:auto;flex:none;display:flex;gap:9px;align-items:baseline}
+.rbrowse{border:none;background:none;color:var(--muted);font:inherit;font-size:11px;
+  cursor:pointer;padding:2px 0;letter-spacing:.08em;white-space:nowrap}
+.rbrowse:hover{color:var(--accent-hi)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- 顶灯带 -->
+  <div class="lamp" id="lamp">
+    <span class="pulse" id="pulse"></span>
+    <span class="svc" id="svc">连接中…</span>
+    <span class="meta num" id="meta"></span>
+  </div>
+
+  <!-- 曝光区 -->
+  <section class="stage" id="stage">
+    <div class="plate" id="plate">
+      <p><b>台面是空的。</b>写一句，图就出来。</p>
+    </div>
+    <div class="field hidden" id="field">
+      <p class="fp" id="fPrompt"></p>
+    </div>
+    <img class="shot hidden" id="shot" alt="">
+    <!-- 失败态：一份可读的报告（卡在哪 / 原始报错 / 下一步可点），不是一行 toast -->
+    <div class="fail hidden" id="fail">
+      <p id="failWhere"></p>
+      <pre class="fraw" id="failRaw"></pre>
+      <div class="fails" id="failActs"></div>
+    </div>
+    <div class="bloom" id="bloom"></div>
+  </section>
+
+  <!-- 进度带 -->
+  <section class="prog hidden" id="prog">
+    <div class="track" id="track">
+      <div class="ticks" id="ticks"></div>
+      <div class="fill" id="fill"><i></i></div>
+      <div class="phead" id="pHead"></div>
+      <div class="ticks over"></div>
+    </div>
+    <div class="scale" id="scale"></div>
+    <div class="progfoot">
+      <p class="eta num" id="eta"></p>
+      <button class="cancel" id="cancel" type="button">取消</button>
+    </div>
+  </section>
+
+  <!-- 排队 -->
+  <p class="queue hidden" id="queueLine"></p>
+
+  <!-- 工作台面 -->
+  <div class="desk paper">
+    <form class="compose" id="compose">
+      <textarea id="p" rows="2" placeholder="写一句，回车就出图…" spellcheck="false" autocomplete="off"></textarea>
+    </form>
+
+    <section class="recipe" id="recipe">
+      <div class="card-line" id="cardLine">
+        <span class="who">配方</span>
+        <span class="name" id="rName">默认</span>
+        <span class="rbrow">
+          <button class="rbrowse" id="rBrowse" type="button">浏览配方</button>
+          <button class="toggle" id="rToggle" type="button">改 ›</button>
+        </span>
+      </div>
+      <div class="card-line sub num" id="rRest"></div>
+      <div class="card-line sub num" id="rLine"></div>
+
+      <div class="controls hidden" id="controls">
+        <div class="grp hidden" id="grpLine"><span class="lbl">线路</span><div class="chips" id="cLine"></div></div>
+        <div class="grp"><span class="lbl">画幅</span><div class="chips" id="cRatio"></div></div>
+        <div class="grp"><span class="lbl">步数</span><div class="chips" id="cSteps"></div></div>
+        <div class="grp"><span class="lbl">种子</span><div class="chips" id="cSeed"></div></div>
+
+        <div class="adv">
+          <button class="open" id="advOpen" type="button">高级 ›</button>
+          <div class="adv-body hidden" id="advBody">
+            <div class="fld">
+              <span>结构实化（ModelSamplingAuraFlow · shift 3.1）</span>
+              <div class="sw">
+                <button id="swShift" type="button" aria-pressed="true"><i></i></button>
+                <em id="swShiftTxt"></em>
+              </div>
+            </div>
+            <label class="fld">
+              <span>负向词（这套栈真正的风格开关，改动请谨慎）</span>
+              <textarea id="neg" spellcheck="false" placeholder="留空 = 用内置那串反像素风 / 反 AI 味词"></textarea>
+            </label>
+            <p class="note">cfg 固定 1.0；采样器与调度器绑在模型变体上，不单独给。风格串由管线侧解算，这儿只挑名字；精修模式的 denoise 三档等两段管线接上再放。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="actions">
+      <button class="ghost" id="rerun" type="button" disabled>照原样再跑</button>
+      <button class="go" id="go" type="submit" form="compose">出图 <small id="goSub"></small></button>
+    </div>
+    <p class="hint" id="hint"></p>
+  </div>
+
+  <!-- 配方库：导航（大类 / 子类 / 搜索 / 筛选）留在暗色地面上 ——
+       它们是机器的旋钮；结果网格落在一块纸上 —— 那是相纸。
+       层级靠材质，不靠字重。 -->
+  <section class="libsec hidden" id="lib">
+    <div class="libhead">
+      <h3>配方库</h3>
+      <span class="libcnt" id="libCnt"></span>
+      <button class="libx" id="libClose" type="button">收起</button>
+    </div>
+    <nav class="cats" id="libCats"></nav>
+    <div class="subcats hidden" id="libSubs"></div>
+    <div class="srow">
+      <input id="libQ" type="text" placeholder="搜索配方名、状态或说明" spellcheck="false" autocomplete="off">
+      <button class="lchip" id="libOnly" type="button">只看有样图</button>
+      <button class="lchip" id="libFilt" type="button">筛选 · 0</button>
+      <button class="lclear hidden" id="libClear" type="button">清除</button>
+    </div>
+    <div class="filts hidden" id="libFiltBody"></div>
+    <div class="libpaper paper" id="libPaper"></div>
+  </section>
+
+  <!-- 体检：这台机器装了什么、能跑哪条线、卡在哪 -->
+  <section class="envbox hidden" id="envBox">
+    <p class="envsum" id="envSum"></p>
+    <div class="envbody hidden" id="envBody">
+      <div class="envrow" id="envDirs"></div>
+      <div class="envrow" id="envLines"></div>
+      <div class="envrow" id="envReach"></div>
+    </div>
+  </section>
+
+  <!-- 成品架 -->
+  <section class="rack paper">
+    <h3>成品 <span id="rackCount"></span></h3>
+    <div class="strip" id="strip"></div>
+    <p class="rackline" id="rackLine"></p>
+    <p class="none hidden" id="rackNone">还没有成品。第一张会从暗里浮上来。</p>
+  </section>
+
+  <p class="ver">出图台 v0.10.0 · 过审 · 2026-10-13 21:12</p>
+</div>
+
+<div class="lb" id="lightbox">
+  <img id="lbImg" alt="">
+  <p class="cap" id="lbCap"></p>
+</div>
+
+<script>
+(function () {
+  /* ── 鉴权 ─────────────────────────────────────────────
+     卡片页是宿主用一次性的 surface session 挂起来的：裸 fetch 吃 403。
+     凭证在路径 /api/apps/<id>/ui/_surface/<token>/… 里，或 query 的 appSurfaceSession。
+     fetch 用头部，<img src> 用 query（元素发请求带不了自定义头）。 */
+  var APP_ID = decodeURIComponent(location.pathname.split("/")[3] || "comfyui-studio");
+  var API = "/api/apps/" + APP_ID + "/routes";
+
+  function readSessionToken() {
+    var m = /\/ui\/_surface\/([^/]+)(?:\/|$)/.exec(location.pathname);
+    if (m && m[1]) { try { return decodeURIComponent(m[1]); } catch (e) { return m[1]; } }
+    var q = new URL(location.href).searchParams;
+    return q.get("appSurfaceSession") || q.get("token") || null;
+  }
+  var TOKEN = readSessionToken();
+
+  function apiUrl(path) {
+    var url = API + path;
+    if (TOKEN) url += (url.indexOf("?") >= 0 ? "&" : "?") + "appSurfaceSession=" + encodeURIComponent(TOKEN);
+    return url;
+  }
+  function apiFetch(path, init) {
+    var opts = init || {};
+    var headers = {}, k;
+    for (k in (opts.headers || {})) headers[k] = opts.headers[k];
+    if (TOKEN) headers["X-Hana-App-Surface-Session"] = TOKEN;
+    opts.headers = headers;
+    return fetch(apiUrl(path), opts);
+  }
+  /* 预览桩：本地自检（_preview/mock.html）时由外壳注入，生产环境不存在。
+     只当测试缝合点用，不给宿主任何新契约。 */
+  function imgSrc(path) {
+    var h = window.HANA_STUDIO_PREVIEW;
+    return (h && typeof h.image === "function") ? h.image(path) : apiUrl(path);
+  }
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  /* ── 决定，不是参数 ─────────────────────────────────────
+     丹青的参数暴露规则：交给她的每一项都是「决定」。
+     shift / denoise / cfg / sampler 不进界面主入口。 */
+
+  // 风格：界面**只认 id**，正/负向串由管线侧解算（丹青定的分工：一处映射，防两边各写一份漂移）。
+  // 全表从 /styles 拉（管线侧是唯一权威，界面不另存一份）；这是拉不到时的兵底 ——
+  // 宁可只剩一条，也不编一堆没实测的风格出来。
+  var STYLES = [
+    { id: "default", name: "默认 · 平涂色块硬边", status: "verified", note: "现行串原样",
+      cat: "medium", catName: "媒介与技法", sub: "数字", tags: {},
+      dropNeg: [], posSuffix: "", samples: [] },
+  ];
+
+  // 画幅：按 Qwen 原生甜区（总像素约 1.6 MP）折算，都在 8 的倍数上。
+  // 1024² 是唯一的省时档（1.05 MP），代价是出图相对偏软。
+  var RATIOS = [
+    { id: "1:1",  name: "方",     sub: "1024² 省时", w: 1024, h: 1024 },
+    { id: "3:4",  name: "竖 3:4", w: 1096, h: 1464 },
+    { id: "9:16", name: "竖 9:16", w: 952,  h: 1688 },
+    { id: "16:9", name: "横 16:9", w: 1688, h: 952  },
+    { id: "3:2",  name: "横 3:2",  w: 1560, h: 1040 },
+  ];
+
+  var STEPS = [
+    { v: 20, name: "探路" },
+    { v: 40, name: "定稿" },
+    { v: 60, name: "加细" },
+  ];
+
+  var SEC_PER_STEP = 4.0;   // 与后端同源。实测：1024²/20 步 ≈ 69 s（~3.4 s/步）；
+                            // 768×832/20 步 ≈ 48 s。取 4.0 偏保守一点，含一次模型加载的余地。
+  var BASE_MP = 1024 * 1024;
+
+  // 结构实化（ModelSamplingAuraFlow · shift 3.1）：丹青的规则是「默认写死 3.1，
+  // 最多一个二值开关」。但那个节点还没接进 graph.mjs——在接上之前这个开关置灰、
+  // 不参与提交。宁可在界面上少一个能按的键，也不亮一个按了没用的键。
+  // 丹青把节点接好后，这里改成 true，并在 payload() 里带上 shift。
+  var SHIFT_WIRED = false;
+
+  var cfg = {
+    line: null,             // null = 跟体检结果走默认线；出图时带上去
+    style: "default",
+    ratio: "1:1",
+    steps: 20,
+    seedMode: "random",     // random | last
+    lastSeed: null,
+    shift: true,            // 结构实化；丹青建议常挂 3.1
+    negative: "",           // 空 = 用后端内置串
+  };
+  var open = { controls: false, adv: false };
+  var lastJob = null;       // 最近一条记录（照原样再跑回显用）
+  var shownJob = null;      // 曝光区当前显示的 job id（显影判据）
+  var cfgSynced = null;     // 已回显过的 job id
+  var touched = false;      // 她动过「决定」之后，别再被新出的图覆盖
+  var ctlDirty = true;      // 控件是否需要重建（每 3 秒重建一次会把焦点和悬停抖没）
+  var rackNewest = null;    // 成品架最新一张（不悬停时信息行显示它）
+  var rackHover = null;     // 正在悬停的 job id
+  var runningId = null;     // 当前在跑的 job id（取消要指名，不能靠“最新的那条”猜）
+
+  /** 配方查找：自定义优先。两边的 id 不会撞（自定义一律 `u-` 开头），
+      所以顺序只为“我建的排前面”，不是覆盖关系。 */
+  function styleById(id) {
+    var key = String(id || "");
+    var hit = CUSTOM.filter(function (s) { return s.id === key; })[0]
+      || STYLES.filter(function (s) { return s.id === key; })[0];
+    return hit || STYLES[0];
+  }
+  /** 两档合起来看的那一份（渲染与计数都用它，免得两处口径不一）。 */
+  function allRows() { return CUSTOM.concat(STYLES); }
+  var ratioById = function (id) { return RATIOS.filter(function (r) { return r.id === id; })[0] || RATIOS[0]; };
+  var lineById = function (id) { return LINES.filter(function (l) { return l.id === id; })[0] || null; };
+  /** chip 上要短名：括号里的长解释不进按钮，挂 title 里 */
+  function shortLine(l) {
+    var s = String(l.label || l.id).replace(/（[^）]*）/g, "").trim();
+    return s.length > 18 ? s.slice(0, 17) + "…" : s;
+  }
+
+  /** 新出一张图：把「决定」同步成它用的那一套 —— 配方条的读态就该是「这张用了什么」。 */
+  function syncFromJob(job) {
+    if (touched) return;
+    if (job.width && job.height) {
+      var hit = RATIOS.filter(function (x) { return x.w === job.width && x.h === job.height; })[0];
+      if (hit) cfg.ratio = hit.id;
+    }
+    var st = Number(job.steps);
+    if (st) {
+      cfg.steps = STEPS.some(function (s) { return s.v === st; })
+        ? st
+        : STEPS.reduce(function (a, b) { return Math.abs(b.v - st) < Math.abs(a.v - st) ? b : a; }).v;
+    }
+    if (job.recipe) {
+      var s = STYLES.filter(function (x) { return x.name === job.recipe; })[0];
+      if (s) cfg.style = s.id;
+    }
+  }
+
+  function sec(n) {
+    n = Math.max(0, Math.round(n || 0));
+    if (n < 60) return n + " 秒";
+    return Math.floor(n / 60) + " 分 " + (n % 60) + " 秒";
+  }
+  function tinySec(n) {  // 成品架的小标签，分钟就够
+    n = Math.max(0, Math.round(n || 0));
+    return n < 60 ? n + " 秒" : Math.round(n / 60) + " 分";
+  }
+  function shortSec(n) { // 按钮上的字数要短
+    n = Math.max(1, Math.round(n || 0));
+    if (n < 60) return n + " 秒";
+    var m = Math.round(n / 60);
+    return m + " 分";
+  }
+  function fmtSeed(s) {
+    if (s == null || s === "") return "随机";
+    var t = String(s);
+    return t.length > 9 ? t.slice(0, 5) + "…" + t.slice(-3) : t;
+  }
+  function dimText(w, h) { return w === h ? w + "²" : w + "×" + h; }
+  function dimLabel(r) { return dimText(r.w, r.h); }
+
+  /** 步数怎么写。多段图的 steps 是**基底那一段**的步数（后端从节点号最小的
+      KSampler 取），不能当总步数写出来 —— 数字没错、标签错了更难看出来。 */
+  function stepText(j) {
+    if (!j.steps) return null;
+    return j.stages > 1 ? "基底 " + j.steps + " 步 × " + j.stages + " 段" : j.steps + " 步";
+  }
+  function estSec(steps, ratio) {
+    var r = ratioById(ratio);
+    return Math.max(30, Math.round(steps * SEC_PER_STEP * (r.w * r.h) / BASE_MP));
+  }
+
+  /* ── 顶灯带 ───────────────────────────────────────────── */
+  function setService(ok, svc, err) {
+    var p = $("pulse");
+    if (!p.classList.contains("run")) p.className = "pulse " + (ok ? "on" : "off");
+    if (ok && svc) {
+      $("svc").textContent = "ComfyUI " + (svc.version || "")
+        + (svc.device ? " · " + String(svc.device).split(" ").slice(1, 3).join(" ") : "");
+      var bits = [];
+      if (svc.vramFreeGb != null) bits.push("显存 " + svc.vramFreeGb + " / " + svc.vramTotalGb + " GB");
+      var q = (svc.running || 0) + (svc.pending || 0);
+      if (q) bits.push("队列 " + q);
+      $("meta").innerHTML = bits.join(" · ");
+    } else {
+      $("svc").textContent = err ? ("连不上 ComfyUI · " + err) : "连不上 ComfyUI";
+      $("meta").textContent = "";
+    }
+  }
+
+  /* ── 曝光区 ───────────────────────────────────────────── */
+  function showStage(kind) { // kind: plate | field | shot | fail
+    $("plate").classList.toggle("hidden", kind !== "plate");
+    $("field").classList.toggle("hidden", kind !== "field");
+    $("shot").classList.toggle("hidden", kind !== "shot");
+    $("fail").classList.toggle("hidden", kind !== "fail");
+  }
+
+  /* ── 首屏三种「没状态」，各有话说 ─────────────────────────
+     不区分的话，陌生人第一眼只看到「台面是空的」—— 而他可能压根没连上
+     ComfyUI，或者机器上一个能出图的模型都没有。那两种情况该告诉他下一步点哪。 */
+  var envProbing = true;
+  function plateLine(main, sub) {
+    var p = document.createElement("p");
+    if (main) { var b = document.createElement("b"); b.textContent = main; p.appendChild(b); }
+    if (sub) p.appendChild(document.createTextNode(sub));
+    return p;
+  }
+  function renderEmpty(online, errText) {
+    var p = $("plate");
+    p.innerHTML = "";
+    if (!online) {
+      p.appendChild(plateLine("连不上 ComfyUI。", "先把 ComfyUI 起起来（命令行版 python main.py --lowvram，端口默认 8188）。"));
+      if (errText) p.appendChild(plateLine("", "它说：" + errText));
+      return;
+    }
+    if (envProbing) {
+      p.appendChild(plateLine("正在体检你的 ComfyUI…", "看看它装了什么、能跑哪条线。这一步不出图，不花钱。"));
+      return;
+    }
+    if (envPlan && !(envPlan.lines || []).length) {
+      p.appendChild(plateLine("这台机器上没探到能出图的模型。", ""));
+      p.appendChild(plateLine("", (envPlan.blocker || "") + " " + (envPlan.nextAction || "")));
+      return;
+    }
+    p.appendChild(plateLine("台面是空的。", "写一句，图就出来。"));
+  }
+
+  function renderField(r) {
+    var ratio = (r.width && r.height) ? { w: r.width, h: r.height } : ratioById(cfg.ratio);
+    var f = $("field");
+    f.style.setProperty("--ar", ratio.w + " / " + ratio.h);
+    f.style.setProperty("--stepSec", Math.max(0.9, (ratio.w * ratio.h / BASE_MP) * SEC_PER_STEP) + "s");
+    var p = $("fPrompt");
+    p.innerHTML = "";
+    var em = document.createElement("em");
+    em.textContent = "正 在 显 影";
+    p.appendChild(em);
+    p.appendChild(document.createTextNode(r.prompt || "(无提示词)"));
+    showStage("field");
+  }
+
+  function renderShot(job) {
+    var freshness = shownJob !== job.job;
+    var img = $("shot");
+    if (freshness) {
+      img.classList.remove("lit");
+      img.classList.add("dev");
+      shownJob = job.job;
+    }
+    img.src = imgSrc("/image?job=" + encodeURIComponent(job.job) + "&i=0");
+    img.alt = "";
+    img.title = "点开看大图";
+    showStage("shot");
+    if (freshness) {
+      void img.offsetWidth;                 // 强制回流，让动画从头播
+      img.classList.add("lit");
+      var b = $("bloom");
+      b.classList.remove("lit"); void b.offsetWidth; b.classList.add("lit");
+    }
+  }
+
+  /* ── 进度带 ───────────────────────────────────────────── */
+  function renderProgress(r) {
+    var prog = $("prog");
+    if (!r) { prog.classList.add("hidden"); fillRest(false); return; }
+    prog.classList.remove("hidden");
+
+    var steps = Number(r.steps) || cfg.steps || 20;
+    var track = $("track");
+    track.style.setProperty("--steps", steps);
+    track.style.setProperty("--majors", Math.max(1, Math.ceil(steps / 10)));
+    track.style.setProperty("--fines", steps > 40 ? Math.round(steps / 2) : steps);   // 步多时细格减半，否则糊成一片
+
+    // 刻度：0 到 steps，每 10 步一个数字（末位贴右）
+    if (track.dataset.steps !== String(steps)) {
+      track.dataset.steps = String(steps);
+      var sc = $("scale");
+      sc.innerHTML = "";
+      for (var s = 0; s <= steps; s += Math.max(1, Math.round(steps / 4))) {
+        var el = document.createElement("span");
+        el.textContent = s;
+        if (s === 0) el.className = "s";
+        else if (s === steps) { el.className = "e"; el.style.right = "0"; }
+        else el.style.left = (s / steps * 100) + "%";
+        sc.appendChild(el);
+      }
+    }
+
+    var pct = r.status === "success" ? 100 : Math.min(99, Math.max(0, r.percent || 0));
+    $("fill").style.width = pct + "%";
+    fillRest(r.status === "success");
+    // 亮头跟着填充的右端走；入队时（0%）不亮，免得一根亮线杵在左边。
+    var head = $("pHead");
+    head.style.left = "calc(" + pct + "% - 1px)";
+    head.classList.toggle("on", r.status !== "success" && pct > 1);
+    flashTicks(r, pct);
+
+    var cur = Math.min(steps, Math.max(0, Math.round(pct / 100 * steps)));
+    var eta = $("eta");
+    eta.innerHTML = "";
+    if (r.status === "success") {
+      eta.appendChild(txt("第 " + steps + " / " + steps + " 步", true));
+      eta.appendChild(sep());
+      eta.appendChild(txt("已完成 · " + sec(r.elapsedSec)));
+    } else {
+      eta.appendChild(txt("第 " + cur + " / " + steps + " 步", true));
+      eta.appendChild(sep());
+      var left = Math.max(0, (r.expectedSec || 0) - (r.elapsedSec || 0));
+      eta.appendChild(txt("预计还需 " + sec(left)));
+      eta.appendChild(sep());
+      eta.appendChild(txt("已用 " + sec(r.elapsedSec)));
+    }
+    function txt(t, b) { var s = document.createElement("span"); if (b) { var e = document.createElement("b"); e.textContent = t; s.appendChild(e); } else s.textContent = t; return s; }
+    function sep() { var s = document.createElement("span"); s.className = "sep"; s.textContent = "·"; return s; }
+  }
+  function fillRest(rest) { $("fill").classList.toggle("rest", !!rest); }
+
+  /* 跨过一个大刻度就闪一下。时间感靠这个，不靠读数字。 */
+  var lastTickCur = -1;
+  var lastTickJob = null;
+  function flashTicks(r, pct) {
+    var steps = Number(r.steps) || cfg.steps || 20;
+    if (r.job !== lastTickJob) { lastTickJob = r.job; lastTickCur = -1; }
+    var cur = Math.round(pct / 100 * steps);
+    if (cur <= lastTickCur) { lastTickCur = cur; return; }
+    var from = lastTickCur;
+    lastTickCur = cur;
+    var major = Math.max(1, Math.round(steps / 4));
+    for (var s = from + 1; s <= cur; s++) {
+      if (s % major !== 0) continue;
+      (function (at) {
+        var d = document.createElement("div");
+        d.className = "mtick";
+        d.style.left = (at / steps * 100) + "%";
+        $("track").appendChild(d);
+        setTimeout(function () { if (d.parentNode) d.parentNode.removeChild(d); }, 620);
+      })(s);
+    }
+  }
+
+  /* ── 体检面板（人看结论，排查的人看细节） ────────────────── */
+  var envOpen = false;
+  function toggleEnv(force) {
+    envOpen = typeof force === "boolean" ? force : !envOpen;
+    $("envBody").classList.toggle("hidden", !envOpen);
+    renderEnv();
+  }
+  function envLine(box, text, cls) {
+    var d = document.createElement("span");
+    d.className = "ln" + (cls ? " " + cls : "");
+    d.textContent = text;
+    box.appendChild(d);
+  }
+  function renderEnv() {
+    if (!envPlan) return;
+    $("envBox").classList.remove("hidden");
+    var d = envPlan;
+
+    var sum = $("envSum");
+    sum.innerHTML = "";
+    if (!(d.lines || []).length) {
+      sum.appendChild(document.createTextNode("体检 · "));
+      var b0 = document.createElement("b"); b0.textContent = "没有可用的线";
+      sum.appendChild(b0);
+      sum.appendChild(document.createTextNode("（" + (d.blocker || "") + "）"));
+    } else {
+      sum.appendChild(document.createTextNode("体检 · 能跑 "));
+      var b = document.createElement("b"); b.textContent = (d.lines || []).length + " 条线";
+      sum.appendChild(b);
+      var cur = lineById(cfg.line) || d.lines[0];
+      sum.appendChild(document.createTextNode(" · 当前 " + shortLine(cur)));
+      sum.appendChild(document.createTextNode("（点这行展开）"));
+    }
+    if (envOpen) sum.appendChild(document.createTextNode(" ˅"));
+    sum.className = "envsum" + (envOpen ? " open" : "");
+
+    if (!envOpen) return;
+
+    var dirs = $("envDirs"); dirs.innerHTML = "";
+    var t = document.createElement("b"); t.textContent = "家底"; dirs.appendChild(t);
+    var m = d.machine || {}, c = m.counts || {};
+    envLine(dirs, "节点 " + m.nodeCount + " · 枚举口 " + m.enumPorts + " / 加载口 " + m.loaderPorts);
+    ["checkpoints", "unet", "gguf", "textEncoders", "vae", "loras", "controlnet"].forEach(function (k) {
+      var n = c[k] || 0;
+      envLine(dirs, k + " " + n + (n ? "" : "（空）"), n ? null : "no");
+    });
+
+    var lines = $("envLines"); lines.innerHTML = "";
+    t = document.createElement("b"); t.textContent = "线路"; lines.appendChild(t);
+    if (!(d.lines || []).length) envLine(lines, "一条也没探到。" + (d.nextAction || ""), "no");
+    (d.lines || []).forEach(function (l) {
+      envLine(lines, "· " + l.label + "　[" + l.completeness + (l.confidence ? " / " + l.confidence : "") + "]　" + (l.encNode || ""), l.id === d.chosen ? "ok" : null);
+      envLine(lines, "    " + (l.dit || "?") + "( " + (l.ditName || "?") + " )　VAE " + (l.vaeName || "?"));
+    });
+
+    var reach = $("envReach"); reach.innerHTML = "";
+    t = document.createElement("b"); t.textContent = "产权重能经哪些节点加载（前 " + (d.reach || []).length + " 行）"; reach.appendChild(t);
+    (d.reach || []).forEach(function (l) { envLine(reach, l); });
+  }
+
+  /* ── 失败态：可读、可复制、可往下走 ───────────────────────────────── */
+  function renderFail(job) {
+    showStage("fail");
+    $("failWhere").textContent = job.error
+      ? "这张没出成。原因在下面原文里（ComfyUI 自己说的，没改写）。"
+      : "这张没出成，ComfyUI 没给出原因。可以照原样再跑一次看看。";
+    $("failRaw").textContent = job.error || "(没有原始报错)";
+    var acts = $("failActs");
+    acts.innerHTML = "";
+    acts.appendChild(actBtn("复制报错", function (btn, label) {
+      copyText(job.error || "", btn, label, "没有报错可复制");
+    }));
+    acts.appendChild(actBtn("照原样再跑", function (btn, label) {
+      flash(btn, label, "重投中…");
+      apiFetch("/rerun", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job: job.job }) })
+        .then(function (r) { return r.json(); })
+        .then(function (d) { flash(btn, label, d && d.ok ? "已重投" : "重投失败"); if (d && d.ok) tick(); })
+        .catch(function () { flash(btn, label, "重投失败"); });
+    }));
+    acts.appendChild(actBtn("看体检", function () { toggleEnv(true); }));
+  }
+
+  /* ── 成品架 ───────────────────────────────────────────── */
+  function renderRack(list) {
+    var strip = $("strip");
+    $("rackNone").classList.toggle("hidden", !!(list && list.length));
+    $("rackCount").textContent = list && list.length ? "· " + list.length : "";
+    rackNewest = (list || [])[0] || null;
+    $("rackLine").classList.toggle("hidden", !rackNewest);
+    if (!rackHover) setRackLine(rackNewest);
+    var sig = (list || []).map(function (j) { return j.job; }).join(",");
+    if (strip.dataset.sig === sig) return;
+    strip.dataset.sig = sig;
+    strip.innerHTML = "";
+    (list || []).forEach(function (j) {
+      var cell = document.createElement("div");
+      cell.className = "cell";
+      cell.title = j.prompt || "";
+      if (j.status === "success" && (j.files || []).length) {
+        var img = document.createElement("img");
+        img.loading = "lazy"; img.alt = "";
+        // 监听必须在赋 src 之前挂上：缓存命中或 data URL 会在赋值那一刻就把 load 放完，
+        // 后挂的监听永远收不到，图就永远停在 opacity:0（上一版就是这么整片发黑的）。
+        img.addEventListener("load", function () { img.classList.add("ready"); });
+        img.addEventListener("error", function () { img.classList.add("ready"); });
+        img.src = imgSrc("/image?job=" + encodeURIComponent(j.job) + "&i=0");
+        if (img.complete) img.classList.add("ready");
+        cell.appendChild(img);
+      }
+      var b = document.createElement("span");
+      b.className = "badge" + (j.status === "success" ? "" : " is-fail");
+      b.textContent = j.status === "success"
+        ? ((j.steps ? j.steps + "步 · " : "") + tinySec(j.elapsedSec))
+        : "失败";
+      cell.appendChild(b);
+      cell.addEventListener("click", function () { openLightbox(j); });
+      cell.addEventListener("mouseenter", function () { rackHover = j.job; setRackLine(j); });
+      cell.addEventListener("mouseleave", function () { rackHover = null; setRackLine(rackNewest); });
+      strip.appendChild(cell);
+    });
+  }
+
+  /** 成品架下面那行：一句话 + 一行参数。悬停哪张就写哪张。
+     这行不放 seed —— 15 位数会把耗时挤成省略号，而耗时是这行最该看的东西之一。
+     seed 在大图里给全。 */
+  function setRackLine(j) {
+    var el = $("rackLine");
+    el.innerHTML = "";
+    if (!j) return;
+    var t = document.createElement("span");
+    t.className = "t";
+    t.textContent = j.prompt || "(无提示词)";
+    var d = document.createElement("span");
+    d.className = "d";
+    var bits = [];
+    if (j.recipe) bits.push(j.recipe);
+    var submitted = (j.width && j.height) ? dimText(j.width, j.height) : (j.size || null);
+    if (submitted) bits.push(submitted);
+    // 实出尺寸跟提交尺寸不是一个数（精修图尤其），对不上就分开写
+    if (j.actualWidth && j.actualHeight) {
+      var actual = dimText(j.actualWidth, j.actualHeight);
+      if (actual !== submitted) bits.push("实出 " + actual);
+    }
+    if (j.steps) bits.push(stepText(j));
+    if (j.elapsedSec) bits.push(sec(j.elapsedSec));
+    if (j.status !== "success") bits.push("失败");
+    d.textContent = bits.join(" · ");
+    el.appendChild(t);
+    el.appendChild(d);
+  }
+
+  // 纵向滚轮横推成品架
+  $("strip").addEventListener("wheel", function (e) {
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    this.scrollLeft += e.deltaY;
+    e.preventDefault();
+  }, { passive: false });
+
+  /* ── 配方条 ───────────────────────────────────────────── */
+  function renderRecipeRead() {
+    var s = styleById(cfg.style);
+    var r = ratioById(cfg.ratio);
+    $("rName").textContent = s.name;
+    var useLast = cfg.seedMode === "last" && cfg.lastSeed != null;
+    var bits = [dimLabel(r), cfg.steps + " 步", "seed " + (useLast ? fmtSeed(cfg.lastSeed) : "随机")];
+    var curStyle = styleById(cfg.style);
+    if (curStyle && curStyle.status && curStyle.status !== "verified" && curStyle.status !== "baseline") {
+      bits.push(curStyle.name + " 未实测");
+    }
+    if (lastJob && lastJob.status === "success") bits.push("上一张 " + sec(lastJob.elapsedSec));
+    if (lastJob && lastJob.status === "failed") bits.push("上一张失败");
+    $("rRest").textContent = bits.join(" · ");
+    $("rRest").title = useLast ? "seed " + cfg.lastSeed : "";
+    $("rToggle").textContent = open.controls ? "收起 ˅" : "改 ›";
+    // 线路显性化：不用点开「改」也能看见现在跑的是哪条、凭什么。
+    var ln = lineById(cfg.line);
+    var el = $("rLine");
+    if (ln) {
+      el.textContent = "线路 · " + shortLine(ln) + (LINES.length > 1 ? "（另有 " + (LINES.length - 1) + " 条备选）" : "") + " · " + (ln.dit || "");
+      el.title = (ln.label || "") + ((ln.evidence || []).length ? "\n" + ln.evidence.join("\n") : "");
+    } else {
+      el.textContent = envPlan && envPlan.blocker ? "线路 · " + envPlan.blocker : "线路 · 体检中…";
+      el.title = envPlan && envPlan.nextAction ? envPlan.nextAction : "";
+    }
+  }
+
+  /* ── 配方库（v2 · 图优先） ──────────────────────────────
+     规格：_studio_preview/设计_前端审美重置.md v2 一节。它是「看图挑风格」，
+     不是「读行挑风格」——所以三列图墙是主角，导航只做收窄，不逐层深入。
+     四条不许改：三列（单格 ≈121px）、导航只收窄不逐层深入、点一格原地换对比、
+     摊开正向骨架与负向串。
+
+     ⚠️ 负向串必须标「不参与采样」：cfg=1.0 下它被乘 0，删词对画面零影响
+     （同 seed 逐像素差 0.00，复现脚本 probe_ab_negative.mjs）。
+     界面上任何「删了这些词所以画面……」的因果句都是错的。 */
+  var TAX = null;        // /styles 的分类树
+  var NEG_WORDS = [];    // 默认负向串的 21 个词（管线侧给，界面不自己拆）
+  var SAMPLES = {};      // id -> [样图文件名]
+  var CUSTOM = [];       // 自定义配方（用户自己加的，来自 /styles 的 custom 字段）
+  var SAMPLE_PROMPT = "";// 样图底句的兑底值（池子空了才用到）
+  var SAMPLE_PROMPTS = [];// 底句池：**每次跑样图现场随机挑一句**（东篱 2026-10-13 定的）
+  // 过审记录（人对「这张样图像不像这条配方」的判定）。它是**关于配方的观察**，
+  // 和 status 不是一回事：status 说骨架写没写，review 说人看过图没有。
+  var REVIEWS = { items: {}, counts: { ok: 0, no: 0, unsure: 0 }, total: 0 };
+  var REVIEW_LABEL = { ok: "像", no: "不像", unsure: "说不好" };
+  var sampleJob = null;  // 正在为哪条跑样图：{ id, job, prompt, done }
+  // 六维筛选。前五维的值与计数来自管线侧 taxonomy；「状态」那一维管线侧是 raw enum、
+  // 而且计数算的是 tags.status（恒为 0，见 styles.mjs 的 taxonomy），所以这一维由界面自己派生。
+  var LIB_FILTERS = [
+    { key: "strength", name: "改动幅度" },
+    { key: "fit", name: "贴合度" },
+    { key: "tone", name: "色相" },
+    { key: "need", name: "额外节点" },
+    { key: "confidence", name: "把握" },
+    { key: "status", name: "状态", derived: true,
+      // 「我的配方」是**来源**而不是状态，但它只在这一个维度里能筛，就放这儿了。
+      // 自定义配方的 libStatus 仍然是有样图/待跑样图 —— 两档共用一套状态词。
+      values: ["我的配方", "有样图", "待跑样图", "已验证", "已判死", "对照基线"] },
+    // 第七维是 2026-10-13 加的（设计规格里写的是六维）：过审是件单独的活，
+    // 不是「状态」的一种 —— 有样图不等于有人判过。
+    { key: "review", name: "过审", derived: true,
+      values: ["没判过", "像", "不像", "说不好"] },
+  ];
+  var lib = {
+    open: false, cat: null, sub: null, q: "", only: false,
+    pick: {}, filtOpen: false, sel: null, backScroll: 0,
+    form: null,   // null | { mode:"new"|"edit", id, name, posSuffix, prompt, err }
+  };
+
+  function hasSample(s) { return (SAMPLES[s.id] || []).length > 0; }
+  /** 这条配方的过审判定（没判过 = undefined）。 */
+  function verdictOf(s) {
+    var v = REVIEWS.items[s.id];
+    return v && v.verdict ? v.verdict : null;
+  }
+  /** 过审维度的一档匹配。
+      「没判过」只算**有样图且没判定**的那些 —— 没样图的配方无从判，
+      把它算进「没判过」会让人白点进去一次。 */
+  function matchesReview(s, v) {
+    if (v === "没判过") return hasSample(s) && !verdictOf(s);
+    return verdictOf(s) === ({ "像": "ok", "不像": "no", "说不好": "unsure" })[v];
+  }
+  /** 状态维度的一档匹配。
+      ⚠ 筛选与**计数**必须共用这一个函数：以前计数那段自己写了一遍，
+      没把「自定义不参与状态档」算进去 —— 于是显示“有样图 59”，
+      点进去只有 58 条（那 1 条是自定义的）。数字骗人比功能坏了更坏。 */
+  function matchesStatusDim(s, v) {
+    var mine = s.status === "custom";
+    if (v === "我的配方") return mine;
+    if (mine) return false;              // 自定义只在「我的配方」那一档
+    return libStatus(s) === v;
+  }
+  /** 「半后处理」那句话。semi 是管线侧标的「还差哪几步后处理」，id 取 POSTPROCESS。
+      字段是 2026-10-13 才加的（东篱定的：留着，但标成半后处理），
+      所以它不在时一切照旧 —— 界面不靠它也能活。 */
+  function semiText(s) {
+    var ids = s.semi || [];
+    if (!ids.length) return "";
+    var pp = (TAX && TAX.postprocess) || [];
+    var names = ids.map(function (id) {
+      var hit = pp.filter(function (p) { return p.id === id; })[0];
+      if (!hit) return id;
+      // tool 可能是 null：那一步的后处理脚本还没写。这时候把缺口说出来，
+      // 比显示一个「（null）」或者干脆不提都强。
+      return hit.name + (hit.tool ? "（" + hit.tool + "）" : "（还没有脚本）");
+    });
+    return "半后处理 · 还差：" + names.join("、");
+  }
+  function scroller() { return document.scrollingElement || document.documentElement; }
+
+  /** 一条配方的状态，只在这五档里取一个（格子上那行字与筛选共用同一个判据）。 */
+  function libStatus(s) {
+    if (s.status === "verified") return "已验证";
+    if (s.status === "blocked") return "已判死";
+    if (s.status === "baseline") return "对照基线";
+    return hasSample(s) ? "有样图" : "待跑样图";
+  }
+  /** 展开写的状态。**有样图 ≠ 已验证** —— 前者只说明它跑过一张。 */
+  function libStatusLong(s) {
+    if (s.status === "custom") {
+      return "自定义 · 未实测（骨架是唯一杠杆；它不碰负向串）" + (hasSample(s) ? "，已经有一张样图" : "，还没跑过样图");
+    }
+    if (s.status === "verified") return "已实测 · 唯一能写死进任何地方的一条";
+    if (s.status === "blocked") return "已判死 · 成立要件是可读的字，骨架管不了字形（翻案要跑一张带文字的探针）";
+    if (s.status === "baseline") return "对照基线 · 没骨架也不删词，等于默认那套；概念上不出图";
+    if (s.status === "pending") return "骨架与删词都还没填 · 选它等于选默认";
+    return hasSample(s) ? "有样图 · 未实测（骨架是唯一杠杆，cfg 1.0 下负向不生效）" : "还没跑过样图";
+  }
+
+  /** 当前生效的条件，写成一句人话。对比视图的返回行、结果数都用它。 */
+  function libSummary() {
+    var bits = [];
+    var c = ((TAX && TAX.cats) || []).filter(function (x) { return x.id === lib.cat; })[0];
+    bits.push(c ? c.name : "全部");
+    if (lib.sub) bits.push(lib.sub);
+    if (lib.q.trim()) bits.push("「" + lib.q.trim() + "」");
+    if (lib.only) bits.push("只看有样图");
+    var n = libActive();
+    if (n) bits.push("筛选 " + n);
+    return bits.join(" · ");
+  }
+  function libActive() {
+    var n = 0;
+    for (var i = 0; i < LIB_FILTERS.length; i++) if (lib.pick[LIB_FILTERS[i].key]) n++;
+    return n;
+  }
+  function libRows() {
+    var q = lib.q.trim().toLowerCase();
+    return allRows().filter(function (s) {
+      var mine = s.status === "custom";
+      // 自定义不属于任何大类/子类，所以一选大类它自然就不在了 —— 这是对的，
+      // 它是「我的」，不是「媒介与技法」。
+      if (lib.cat && s.cat !== lib.cat) return false;
+      if (lib.sub && s.sub !== lib.sub) return false;
+      if (lib.only && !hasSample(s)) return false;
+      for (var i = 0; i < LIB_FILTERS.length; i++) {
+        var f = LIB_FILTERS[i], v = lib.pick[f.key];
+        if (!v) continue;
+        if (f.derived) {
+          if (f.key === "review") { if (!matchesReview(s, v)) return false; continue; }
+          if (!matchesStatusDim(s, v)) return false;
+          continue;
+        }
+        // 自定义没有标签这一维：筛标签时**跳过它**，而不是把它隐藏掉
+        if (mine) continue;
+        if (((s.tags || {})[f.key] || "") !== v) return false;
+      }
+      if (q) {
+        var hay = [s.id, s.name, s.catName, s.sub, s.note, s.posSuffix, (s.dropNeg || []).join(" ")]
+          .join(" ").toLowerCase();
+        if (hay.indexOf(q) < 0) return false;
+      }
+      return true;
+    });
+  }
+  /** 分组：**我的配方永远排最前**，且单独成组。
+      为什么要单开一组而不是混进同类：内置那 60 条是丹青一条条填过、标过把握的，
+      用户随手写一条没有任何把握度 —— 两者并排长一个样，
+      「未实测不许写得像已验证」这套讲法当场就废了。 */
+  function libGroups(rows) {
+    var out = [];
+    // 「＋ 新建」只在没筛东西的时候出现（全部视图），免得筛着筛着还以为能建
+    var canCreate = !lib.cat && !lib.sub && !lib.q.trim();
+    var customs = rows.filter(function (s) { return s.status === "custom"; });
+    if (customs.length || canCreate) {
+      out.push({
+        label: "我的配方", rows: customs, n: customs.length,
+        s: customs.filter(hasSample).length, custom: true, canCreate: canCreate,
+      });
+    }
+    var order = [];
+    ((TAX && TAX.cats) || []).forEach(function (c) {
+      (c.subs || []).forEach(function (sb) { order.push({ cat: c.id, catName: c.name, sub: sb.name }); });
+    });
+    rows.forEach(function (s) {
+      // 自定义不进「大类·子类」那套分组：它已经在最前面单开一组了，
+      // 不拦着就会因为 cat 是 null 而多出一组「我的配方·其他」，同一批图出现两次
+      if (s.status === "custom") return;
+      var sb = s.sub || "其他";
+      if (!order.some(function (o) { return o.cat === s.cat && o.sub === sb; })) {
+        order.push({ cat: s.cat, catName: s.catName || s.cat, sub: sb });
+      }
+    });
+    order.forEach(function (o) {
+      var bucket = rows.filter(function (s) { return s.cat === o.cat && (s.sub || "其他") === o.sub; });
+      if (!bucket.length) return;
+      // sort 是稳定的（V8）：同档内保持配方表原序
+      bucket.sort(function (a, b) { return (hasSample(b) ? 1 : 0) - (hasSample(a) ? 1 : 0); });
+      out.push({
+        label: (o.catName || o.cat) + " · " + o.sub, rows: bucket,
+        n: bucket.length, s: bucket.filter(hasSample).length,
+      });
+    });
+    return out;
+  }
+
+  /** 图或占位。没样图就同尺寸摆占位，不拿别的图充数。 */
+  function libImg(box, src, emptyText) {
+    if (src) {
+      var img = document.createElement("img");
+      img.loading = "lazy";
+      img.alt = "";
+      // 监听必须在赋 src 之前挂上：缓存命中会在赋值那一瞬把 load 放完，后挂的收不到，
+      // 图就永远停在 opacity:0（成品架上一版就这么整片发黑过）。
+      img.addEventListener("load", function () { img.classList.add("ready"); });
+      img.addEventListener("error", function () { img.classList.add("ready"); });
+      img.src = src;
+      if (img.complete) img.classList.add("ready");
+      box.appendChild(img);
+    } else {
+      box.classList.add("empty");
+      var em = document.createElement("em");
+      em.textContent = emptyText;
+      box.appendChild(em);
+    }
+  }
+
+  function libTile(s) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "tile" + (cfg.style === s.id ? " cur" : "");
+    b.dataset.id = s.id;
+    b.title = s.name + (s.note ? "\n" + s.note : "");
+    var p = document.createElement("span");
+    p.className = "pic";
+    libImg(p, hasSample(s) ? imgSrc("/style-image?id=" + encodeURIComponent(s.id) + "&i=0") : null,
+      s.status === "blocked" ? "已判死\n没有样图" : "样图\n待跑");
+    if (s.status === "custom") {
+      var mine = document.createElement("span");
+      mine.className = "mine";
+      mine.textContent = "我的";
+      p.appendChild(mine);
+    }
+    // 过审判定：标在右上。没判过就不标 —— 缺省不该被伪装成一个判定
+    var vd = verdictOf(s);
+    if (vd) {
+      var vb = document.createElement("span");
+      vb.className = "verd " + vd;
+      vb.textContent = REVIEW_LABEL[vd];
+      p.appendChild(vb);
+    }
+    if ((s.semi || []).length) {
+      var sm = document.createElement("span");
+      sm.className = "semi";
+      sm.textContent = "半后处理";
+      p.appendChild(sm);
+    }
+    b.appendChild(p);
+    var nm = document.createElement("span");
+    nm.className = "nm"; nm.textContent = s.name;
+    b.appendChild(nm);
+    var st = document.createElement("span");
+    st.className = "st" + (s.status === "verified" ? " ok" : (s.status === "blocked" ? " no" : ""));
+    st.textContent = libStatus(s);
+    b.appendChild(st);
+    b.addEventListener("click", function () { openLibCompare(s.id); });
+    return b;
+  }
+
+  /** 随机挑一句样图底句。池子由管线侧给（/styles 的 samplePrompts）。
+      为何要随机：底句固定的话，一条讲留白、一条讲厚涂，跑出来都是同一只猫，
+      你看不出**骨架**到底做了什么。 */
+  function rollPrompt(exclude) {
+    var pool = (SAMPLE_PROMPTS || []).filter(function (p) { return p !== exclude; });
+    if (!pool.length) pool = (SAMPLE_PROMPTS || []).slice();
+    if (!pool.length) return SAMPLE_PROMPT || "";
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  /* ── 新建 / 改 一条自定义配方 ────────────────────────────
+     就地展开（跟对比视图一样是「原地换」），不弹窗。
+     三栏：名字 / 骨架 / 样图用的提示词 —— 最后那一栏默认就是内置样图那句。
+     它可改是有意的：骨架压在什么东西上，得跑一张才知道。 */
+  function openForm(s) {
+    lib.backScroll = scroller().scrollTop;
+    // 底句默认是“每次随机”，锁了才算固定 —— 打开表单就先抽一句给你看
+    lib.form = s
+      ? { mode: "edit", id: s.id, name: s.name, posSuffix: s.posSuffix,
+          promptMode: (s.samplePrompt || "").trim() ? "fixed" : "random",
+          prompt: s.samplePrompt || "", roll: rollPrompt(), err: "" }
+      : { mode: "new", id: null, name: "", posSuffix: "",
+          promptMode: "random", prompt: "", roll: rollPrompt(), err: "" };
+    lib.sel = null;
+    renderLib();
+    var top = $("lib").getBoundingClientRect().top + scroller().scrollTop - 6;
+    scroller().scrollTop = Math.max(0, top);
+    var el = $("nfName");
+    if (el) el.focus();
+  }
+
+  function mkBtn(cls, label, fn) {
+    var b = document.createElement("button");
+    b.type = "button"; b.className = cls; b.textContent = label;
+    b.addEventListener("click", fn);
+    return b;
+  }
+
+  /** 表单里一个字段。kind: "input" | "textarea"。改了就写回 lib.form，不另存一份。 */
+  function formField(id, label, kind, value, max, hintText) {
+    var wrap = document.createElement("label");
+    wrap.className = "fl";
+    var lb = document.createElement("span");
+    lb.className = "fklb";
+    lb.textContent = label;
+    wrap.appendChild(lb);
+    var el = document.createElement(kind === "textarea" ? "textarea" : "input");
+    el.id = id;
+    if (kind !== "textarea") el.type = "text";
+    el.value = value || "";
+    el.maxLength = max;
+    el.spellcheck = false;
+    el.autocomplete = "off";
+    el.addEventListener("input", function () {
+      var f = lib.form;
+      if (!f) return;
+      if (id === "nfName") f.name = el.value;
+      else if (id === "nfSk") f.posSuffix = el.value;
+      else f.prompt = el.value;
+      var e2 = $("nfErr");
+      if (e2) e2.textContent = "";
+    });
+    wrap.appendChild(el);
+    if (hintText) {
+      var hh = document.createElement("p");
+      hh.className = "hintline";
+      hh.textContent = hintText;
+      wrap.appendChild(hh);
+    }
+    return wrap;
+  }
+
+  function renderLibForm() {
+    var f = lib.form;
+    var paper = $("libPaper");
+    paper.innerHTML = "";
+
+    var back = document.createElement("button");
+    back.type = "button";
+    back.className = "cmpback";
+    back.textContent = "‹ 返回网格 · " + libSummary();
+    back.addEventListener("click", function () { lib.form = null; renderLib(); });
+    paper.appendChild(back);
+
+    var h = document.createElement("h4");
+    h.className = "cmpname";
+    h.textContent = f.mode === "new" ? "新建一条配方" : "改这条配方的名字或骨架";
+    paper.appendChild(h);
+    var sub = document.createElement("p");
+    sub.className = "cmpsub";
+    sub.textContent = f.mode === "new"
+      ? "它会进「我的配方」那一栏，和内置那 60 条分开摆 —— 你不验，它就不算验过。"
+      : "id 不会变（账本靠它认这条配方），改完样图也还在。";
+    paper.appendChild(sub);
+
+    var form = document.createElement("div");
+    form.className = "nform";
+    form.appendChild(formField("nfName", "名字", "input", f.name, 24,
+      "短的、你自己认得出的。重名不行。"));
+    form.appendChild(formField("nfSk", "骨架串", "textarea", f.posSuffix, 240,
+      "这条配方唯一会让画面变的东西。它会被拼在你写的提示词后面：「你的提示词，骨架」。"));
+
+    // 样图底句：默认「每次随机」，可以锁成一句。
+    // 锁不锁这个选择很重要：底句固定，每条配方的样图都是同一个主体，看不出骨架做了什么。
+    var pw = document.createElement("div");
+    pw.className = "fl";
+    var plb = document.createElement("span");
+    plb.className = "fklb";
+    plb.textContent = "样图用的底句";
+    pw.appendChild(plb);
+    if (f.promptMode === "fixed") {
+      var pin = document.createElement("input");
+      pin.type = "text";
+      pin.id = "nfPm";
+      pin.value = f.prompt || "";
+      pin.maxLength = 200;
+      pin.spellcheck = false;
+      pin.autocomplete = "off";
+      pin.addEventListener("input", function () { f.prompt = pin.value; });
+      pw.appendChild(pin);
+      var rowF = document.createElement("div");
+      rowF.className = "pmrow";
+      rowF.appendChild(formBtn("改回随机", function () {
+        f.promptMode = "random";
+        f.roll = rollPrompt();
+        renderLibForm();
+      }));
+      pw.appendChild(rowF);
+      pw.appendChild(formHint("锁住了就一直用这句。想让它每跑一次换一个，点左边那颗。"));
+    } else {
+      var pv = document.createElement("div");
+      pv.className = "pvbox";
+      pv.textContent = f.roll || rollPrompt();
+      pw.appendChild(pv);
+      var rowR = document.createElement("div");
+      rowR.className = "pmrow";
+      rowR.appendChild(formBtn("换一个", function () { f.roll = rollPrompt(f.roll); renderLibForm(); }));
+      rowR.appendChild(formBtn("锁成这句", function () {
+        f.promptMode = "fixed";
+        f.prompt = f.roll || "";
+        renderLibForm();
+      }));
+      pw.appendChild(rowR);
+      pw.appendChild(formHint("每次跑样图都换一句（上面这句是这次要用的）。底句固定的话，每条配方的样图都长一个主体，就看不出骨架做了什么。"));
+    }
+    form.appendChild(pw);
+
+    var btns = document.createElement("div");
+    btns.className = "fbtns";
+    var b1 = mkBtn("main", "保存并跑一张样图", function () { saveForm(true); });
+    b1.id = "nfSave2";
+    var b2 = mkBtn("alt", "只保存", function () { saveForm(false); });
+    b2.id = "nfSave1";
+    btns.appendChild(b1);
+    btns.appendChild(b2);
+    btns.appendChild(mkBtn("alt", "取消", function () { lib.form = null; renderLib(); }));
+    form.appendChild(btns);
+
+    var err = document.createElement("p");
+    err.className = "ferr";
+    err.id = "nfErr";
+    err.textContent = f.err || "";
+    form.appendChild(err);
+    paper.appendChild(form);
+
+    if (f.mode === "new") {
+      var tip = document.createElement("p");
+      tip.className = "psnote";
+      tip.textContent = "自定义配方只能新增，不能改内置那 60 条 —— 内置表是唯一权威，改它会和源码里那份分叉。";
+      paper.appendChild(tip);
+    }
+  }
+
+  function formHint(t) {
+    var p = document.createElement("p");
+    p.className = "hintline";
+    p.textContent = t;
+    return p;
+  }
+  function formBtn(label, fn) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.addEventListener("click", fn);
+    return b;
+  }
+
+  function formErr(t) {
+    var e = $("nfErr");
+    if (e) e.textContent = t || "";
+  }
+
+  function saveForm(runSample) {
+    var f = lib.form;
+    if (!f) return;
+    var url = f.mode === "new" ? "/custom" : "/custom/update";
+    var fixed = f.promptMode === "fixed";
+    var body = {
+      name: (f.name || "").trim(),
+      posSuffix: (f.posSuffix || "").trim(),
+      // 空串 = 以后每次随机挑一句（存的就是空，不是存一句固定值）
+      samplePrompt: fixed ? (f.prompt || "").trim() : "",
+    };
+    if (f.mode === "edit") body.id = f.id;
+    var b1 = $("nfSave1"), b2 = $("nfSave2");
+    if (b1) b1.disabled = true;
+    if (b2) b2.disabled = true;
+    // 这次要跑的话用哪一句：锁了就照锁的，没锁就用刚才抽的那句
+    var prompt = fixed ? (f.prompt || "").trim() : (f.roll || rollPrompt());
+    var wasNew = f.mode === "new";
+    apiFetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || !d.ok) {
+          formErr((d && d.error) || "保存失败");
+          if (b1) b1.disabled = false;
+          if (b2) b2.disabled = false;
+          return;
+        }
+        lib.form = null;
+        lib.sel = d.item.id;
+        return loadStyles().then(function () {
+          renderLib();
+          hint("配方「" + d.item.name + "」已" + (wasNew ? "建好" : "改好"));
+          if (runSample) startSample(d.item.id, prompt);
+        });
+      })
+      .catch(function (e) {
+        formErr(String((e && e.message) || e));
+        if (b1) b1.disabled = false;
+        if (b2) b2.disabled = false;
+      });
+  }
+
+  /** 给一条自定义配方跑样图。提交完不用守着：render() 每 3 秒对一次账，
+      那张成了就自动抄成 styles/<id>.0.png。 */
+  function startSample(id, prompt) {
+    // 没给就用现抽一句（而且记下来 —— 随机的底句不说清楚，看的人只会好奇“为什么是狐狸”）
+    var used = (prompt || "").trim() || rollPrompt();
+    hint("正在跑这张样图（512² · 20 步 · 约 35 秒）…");
+    apiFetch("/custom/sample", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: id, prompt: used }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || !d.ok) { hint("样图提交失败：" + ((d && d.error) || "未知"), true); return; }
+        sampleJob = { id: id, job: d.job, prompt: d.prompt || used, done: false };
+        hint("样图已入队 " + String(d.job).slice(0, 8) + " · 底句：「" + (d.prompt || used) + "」");
+        if (lib.open && lib.sel === id) renderLib();
+        tick();
+      })
+      .catch(function (e) { hint("样图提交失败：" + ((e && e.message) || e), true); });
+  }
+
+  /** 轮询里顺手看一眼：给自定义配方跑的那张样图成了没有。成了就落盘。 */
+  function watchSample(d) {
+    if (!sampleJob || sampleJob.done) return;
+    var all = [d.running].concat(d.pending || [], d.recent || []).filter(Boolean);
+    var hit = all.filter(function (j) { return j.job === sampleJob.job; })[0];
+    if (!hit) return;
+    if (hit.status === "failed") {
+      hint("样图没跑成：" + (hit.error || "ComfyUI 没给原因"), true);
+      sampleJob = null;
+      if (lib.open && lib.sel) renderLib();
+      return;
+    }
+    if (hit.status !== "success") return;
+    var id = sampleJob.id, job = sampleJob.job;
+    sampleJob.done = true;
+    apiFetch("/custom/sample/commit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: id, job: job }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (res) {
+        sampleJob = null;
+        if (!res || !res.ok) { hint("样图落盘失败：" + ((res && res.error) || "未知"), true); return; }
+        hint("样图好了 · " + res.file + "（" + Math.round((res.bytes || 0) / 1024) + " KB）");
+        return loadStyles().then(function () { if (lib.open) renderLib(); });
+      })
+      .catch(function (e) { sampleJob = null; hint("样图落盘失败：" + ((e && e.message) || e), true); });
+  }
+
+  /** 删：两击确认 —— 删掉会把它的样图一起带走，而且没有回收站。 */
+  function armDelete(btn, id) {
+    if (!btn.dataset.armed) {
+      btn.dataset.armed = "1";
+      btn.classList.add("arm");
+      btn.textContent = "再点一下删";
+      setTimeout(function () {
+        delete btn.dataset.armed;
+        btn.classList.remove("arm");
+        btn.textContent = "删";
+      }, 4000);
+      return;
+    }
+    delete btn.dataset.armed;
+    doDelete(btn, id);
+  }
+
+  function doDelete(btn, id) {
+    btn.disabled = true;
+    btn.textContent = "删除中…";
+    apiFetch("/custom/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: id }) })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || !d.ok) {
+          hint("删除失败：" + ((d && d.error) || "未知"), true);
+          btn.disabled = false;
+          btn.textContent = "删";
+          return;
+        }
+        // 删掉的正好是当前在用的那条：退回默认，不然配方条会挂着一个不存在的名字
+        if (cfg.style === id) { cfg.style = "default"; touched = false; ctlDirty = true; }
+        lib.sel = null;
+        return loadStyles().then(function () {
+          renderLib();
+          renderControls();
+          renderRecipeRead();
+          var gone = d.samplesRemoved || [];
+          hint("已删掉" + (gone.length ? "，连它的样图一起（" + gone.join("、") + "）" : ""));
+        });
+      })
+      .catch(function (e) {
+        hint("删除失败：" + ((e && e.message) || e), true);
+        btn.disabled = false;
+        btn.textContent = "删";
+      });
+  }
+
+  function renderLibNav() {
+    var cats = $("libCats");
+    cats.innerHTML = "";
+    var all = document.createElement("button");
+    all.type = "button"; all.textContent = "全部";
+    all.className = lib.cat ? "" : "on";
+    all.addEventListener("click", function () { lib.cat = null; lib.sub = null; lib.sel = null; renderLib(); });
+    cats.appendChild(all);
+    ((TAX && TAX.cats) || []).forEach(function (c) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = lib.cat === c.id ? "on" : "";
+      b.textContent = c.name;
+      b.title = (c.hint || "") + " · " + c.count + " 条";
+      b.addEventListener("click", function () {
+        lib.cat = lib.cat === c.id ? null : c.id;
+        lib.sub = null; lib.sel = null;
+        renderLib();
+      });
+      cats.appendChild(b);
+    });
+
+    var subs = $("libSubs");
+    subs.innerHTML = "";
+    var cur = ((TAX && TAX.cats) || []).filter(function (x) { return x.id === lib.cat; })[0];
+    if (!cur || !(cur.subs || []).length) {
+      subs.classList.add("hidden");
+    } else {
+      subs.classList.remove("hidden");
+      var s0 = document.createElement("button");
+      s0.type = "button"; s0.textContent = "全部"; s0.className = lib.sub ? "" : "on";
+      s0.addEventListener("click", function () { lib.sub = null; lib.sel = null; renderLib(); });
+      subs.appendChild(s0);
+      cur.subs.forEach(function (sb) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = lib.sub === sb.name ? "on" : "";
+        b.textContent = sb.name + " " + sb.count;
+        b.addEventListener("click", function () {
+          lib.sub = lib.sub === sb.name ? null : sb.name; lib.sel = null; renderLib();
+        });
+        subs.appendChild(b);
+      });
+    }
+
+    $("libOnly").className = "lchip" + (lib.only ? " on" : "");
+    var n = libActive();
+    $("libFilt").className = "lchip" + (lib.filtOpen || n ? " on" : "");
+    $("libFilt").textContent = "筛选 · " + n;
+    $("libClear").classList.toggle("hidden", !n);
+
+    // 六维：折进一行，展开才出现。每维一行、选项横滑（不换成小号下拉菜单）。
+    var body = $("libFiltBody");
+    body.classList.toggle("hidden", !lib.filtOpen);
+    if (!lib.filtOpen) return;
+    body.innerHTML = "";
+    LIB_FILTERS.forEach(function (f) {
+      var row = document.createElement("div");
+      row.className = "frow";
+      var nm = document.createElement("span");
+      nm.className = "fname"; nm.textContent = f.name;
+      row.appendChild(nm);
+      var vals = document.createElement("div");
+      vals.className = "fvals";
+      var opts = f.derived
+        ? f.values.map(function (v) {
+            // 「我的配方」/「过审」数的是来源与判定，其余数的是状态
+            var n = allRows().filter(function (s) {
+              if (f.key === "review") return matchesReview(s, v);
+              return matchesStatusDim(s, v);
+            }).length;
+            return { value: v, count: n };
+          })
+        : (((TAX && TAX.filters) || {})[f.key] || []);
+      opts.forEach(function (o) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = lib.pick[f.key] === o.value ? "on" : "";
+        b.appendChild(document.createTextNode(o.value));
+        var em = document.createElement("em");
+        em.textContent = o.count;
+        b.appendChild(em);
+        b.addEventListener("click", function () {
+          lib.pick[f.key] = lib.pick[f.key] === o.value ? null : o.value;
+          lib.sel = null;
+          renderLib();
+        });
+        vals.appendChild(b);
+      });
+      row.appendChild(vals);
+      body.appendChild(row);
+    });
+  }
+
+  function renderLibGrid() {
+    var paper = $("libPaper");
+    paper.innerHTML = "";
+    var rows = libRows();
+    $("libCnt").textContent = "· " + rows.length
+      + (rows.length === STYLES.length ? "" : " / " + STYLES.length) + " 条";
+    if (!rows.length) {
+      // 空条件要说得出口：到底是哪几条条件把它卡到零的。
+      // 从前一句固定写“按上面「清除」松开筛选” —— 但清除只管六个筛选，
+      // 搜索词把结果清空时它根本不在（筛选 · 0），那句话就是误导。
+      var why = [];
+      var catName = ((TAX && TAX.cats) || []).filter(function (x) { return x.id === lib.cat; })[0];
+      if (lib.q.trim()) why.push("搜索「" + lib.q.trim() + "」");
+      var nf = libActive();
+      if (nf) why.push(nf + " 个筛选");
+      if (lib.sub) why.push("子类「" + lib.sub + "」");
+      if (catName) why.push("大类「" + catName.name + "」");
+      if (lib.only) why.push("只看有样图");
+      var e = document.createElement("p");
+      e.className = "libempty";
+      var eb = document.createElement("b");
+      eb.textContent = "这个条件下一条都没有。";
+      e.appendChild(eb);
+      e.appendChild(document.createTextNode("卡住它的是：" + (why.join(" + ") || "（没看出是哪条，这算个 bug）")));
+      e.appendChild(document.createElement("br"));
+      e.appendChild(document.createTextNode(nf
+        ? "按上面「清除」可以把六个筛选一次松开。"
+        : (lib.q.trim() ? "把搜索框里的字清掉再看。" : "换个大类看看。")));
+      paper.appendChild(e);
+      return;
+    }
+    libGroups(rows).forEach(function (g) {
+      var grp = document.createElement("div");
+      grp.className = "lgroup";
+      var h = document.createElement("p");
+      h.className = "ghead";
+      var gl = document.createElement("span");
+      gl.className = "glabel"; gl.textContent = g.label;
+      var gv = g.rows.filter(function (s) { return verdictOf(s); }).length;
+      var gc = document.createElement("span");
+      gc.className = "gcount";
+      gc.textContent = (g.custom && !g.n)
+        ? "一条都还没有"
+        : (g.n + " 条" + (g.s ? " · 有样图 " + g.s + " · 判过 " + gv : " · 还没有样图"));
+      h.appendChild(gl); h.appendChild(gc);
+      grp.appendChild(h);
+      var grid = document.createElement("div");
+      grid.className = "grid";
+      // 「＋ 新建」占第一格：新建是这一组里最常被找的东西，别塞到组尾
+      if (g.custom && g.canCreate) {
+        var nb = document.createElement("button");
+        nb.type = "button";
+        nb.className = "tile newcard";
+        var np = document.createElement("span");
+        np.className = "pic";
+        var ne = document.createElement("em");
+        ne.textContent = "＋ 新建配方";
+        np.appendChild(ne);
+        nb.appendChild(np);
+        var nn = document.createElement("span");
+        nn.className = "nm"; nn.textContent = "名字 + 骨架 + 样图";
+        nb.appendChild(nn);
+        var ns = document.createElement("span");
+        ns.className = "st"; ns.textContent = "骨架是唯一杠杆";
+        nb.appendChild(ns);
+        nb.addEventListener("click", function () { openForm(null); });
+        grid.appendChild(nb);
+      }
+      g.rows.forEach(function (s) { grid.appendChild(libTile(s)); });
+      grp.appendChild(grid);
+      paper.appendChild(grp);
+    });
+  }
+
+  function renderLibCompare() {
+    // ⚠ 这里必须用 styleById（两档都查），不能只 filter STYLES ——
+    //   只查内置的话，点开自定义那条会静静回落到 default，而你看到的是 default 的对比。
+    var s = styleById(lib.sel);
+    var paper = $("libPaper");
+    paper.innerHTML = "";
+
+    var back = document.createElement("button");
+    back.type = "button";
+    back.className = "cmpback";
+    back.textContent = "‹ 返回网格 · " + libSummary() + " · " + libRows().length + " 条";
+    back.addEventListener("click", function () { closeLibCompare(); });
+    paper.appendChild(back);
+
+    var h = document.createElement("h4");
+    h.className = "cmpname";
+    h.textContent = s.name;
+    paper.appendChild(h);
+    var sub = document.createElement("p");
+    sub.className = "cmpsub";
+    var semi = semiText(s);
+    sub.textContent = (s.catName || s.cat) + (s.sub ? " · " + s.sub : "") + " · " + libStatusLong(s)
+      + (semi ? "　" + semi : "");
+    paper.appendChild(sub);
+
+    // 基准图 / 当前解算，左右并排
+    var grid = document.createElement("div");
+    grid.className = "cmpgrid";
+    var base = document.createElement("figure");
+    var bi = document.createElement("div");
+    bi.className = "cmpimg";
+    libImg(bi, hasSample({ id: "default" }) ? imgSrc("/style-image?id=default&i=0") : null, "基准样图不在");
+    var bc = document.createElement("figcaption");
+    bc.textContent = "基准图 · 默认配方";
+    base.appendChild(bi); base.appendChild(bc);
+    grid.appendChild(base);
+
+    var mine = document.createElement("figure");
+    var mi = document.createElement("div");
+    mi.className = "cmpimg";
+    libImg(mi, hasSample(s) ? imgSrc("/style-image?id=" + encodeURIComponent(s.id) + "&i=0") : null,
+      s.status === "blocked" ? "已判死 · 没有样图"
+        : s.status === "baseline" ? "对照基线 · 本来不出图"
+        : "样图待跑");
+    var mc = document.createElement("figcaption");
+    mc.textContent = s.id === "default" ? "当前解算 · 就是基准本身"
+      : (hasSample(s) ? "当前解算 · " + s.name : "当前解算 · 还没有图");
+    mine.appendChild(mi); mine.appendChild(mc);
+    grid.appendChild(mine);
+    paper.appendChild(grid);
+
+    // 过审：看图 → 当场判。放在图正下方，因为判的就是这张图。
+    // 没样图的配方不给判（无从判）—— 那种情况它的样图格子上写着「待跑」，已经说清楚了。
+    if (hasSample(s)) {
+      var vrow = document.createElement("div");
+      vrow.className = "cmpact sec";
+      var cur = verdictOf(s);
+      ["ok", "no", "unsure"].forEach(function (k) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.className = "soft" + (cur === k ? " on" : "");
+        b.textContent = REVIEW_LABEL[k];
+        b.addEventListener("click", function () { judge(s.id, k); });
+        vrow.appendChild(b);
+      });
+      if (cur) {
+        var un = document.createElement("button");
+        un.type = "button";
+        un.className = "cmpexit";
+        un.textContent = "撤";
+        un.title = "撤掉这条判定，回到「没判过」";
+        un.addEventListener("click", function () { judge(s.id, ""); });
+        vrow.appendChild(un);
+      }
+      paper.appendChild(vrow);
+
+      var vn = document.createElement("p");
+      vn.className = "psnote";
+      vn.textContent = cur
+        ? "你判过：「" + REVIEW_LABEL[cur] + "」。判「不像」不会自动改任何东西 —— 改骨架还是删条目是另一个决定，得看清楚再动手。"
+        : "还没判过。对着上面的骨架看一眼这张图：它是不是那条配方说的样子。（判完自动跳到下一条没判过的）";
+      paper.appendChild(vn);
+
+      var bl = document.createElement("p");
+      bl.className = "psnote";
+      var usedLine = (s.samplePromptUsed || "").trim();
+      // 底句那句话由管线侧给字（sampleBaseText），这里只负责摆上去 ——
+      // 界面再拼一次螺辞就是给分叉留门，不如没有第二份。
+      bl.textContent = "这张样图的底句：" + (usedLine
+        ? "「" + usedLine + "」（每次跑都重抽，只有骨架是那个变量）"
+        : (s.sampleBaseText || "（记录里没写）"));
+      paper.appendChild(bl);
+    }
+
+    var acts = document.createElement("div");
+    acts.className = "cmpact";
+    var isCur = cfg.style === s.id;
+    var use = document.createElement("button");
+    use.type = "button";
+    use.className = "cmpuse";
+    use.textContent = isCur ? "就是当前这条"
+      : ((s.status === "blocked" || s.status === "pending") ? "用这条（等于默认）" : "用这条配方");
+    use.disabled = isCur;
+    use.addEventListener("click", function () { useLib(s); });
+    acts.appendChild(use);
+    var ex = document.createElement("button");
+    ex.type = "button";
+    ex.className = "cmpexit";
+    ex.textContent = "返回网格";
+    ex.addEventListener("click", function () { closeLibCompare(); });
+    acts.appendChild(ex);
+    paper.appendChild(acts);
+
+    // 自定义那条才有的一排：跑样图 / 改 / 删。
+    // 删要两击 —— 它会把样图一起带走，而样图是花 35 秒跑出来的。
+    if (s.status === "custom") {
+      var sec = document.createElement("div");
+      sec.className = "cmpact sec";
+      var running = !!(sampleJob && sampleJob.id === s.id);
+      var run = document.createElement("button");
+      run.type = "button";
+      run.className = "soft";
+      run.textContent = running ? "样图正在跑…" : (hasSample(s) ? "重跑一张样图" : "跑一张样图");
+      run.disabled = running;
+      run.addEventListener("click", function () {
+        // 锁了就用锁的；没锁就现抽一句（每次不同，才看得出骨架做了什么）
+        var pinned = (s.samplePrompt || "").trim();
+        startSample(s.id, pinned || rollPrompt(s.samplePromptUsed || ""));
+      });
+      sec.appendChild(run);
+      var ed = document.createElement("button");
+      ed.type = "button";
+      ed.className = "cmpexit";
+      ed.textContent = "改";
+      ed.addEventListener("click", function () { openForm(s); });
+      sec.appendChild(ed);
+      var del = document.createElement("button");
+      del.type = "button";
+      del.className = "danger";
+      del.textContent = "删";
+      del.addEventListener("click", function () { armDelete(del, s.id); });
+      sec.appendChild(del);
+      paper.appendChild(sec);
+      var rt = document.createElement("p");
+      rt.className = "psnote";
+      var pinnedTxt = (s.samplePrompt || "").trim();
+      var usedTxt = (s.samplePromptUsed || "").trim();
+      if (running) {
+        rt.textContent = sampleJob.prompt
+          ? "正在跑，底句：「" + sampleJob.prompt + "」"
+          : "样图在跑（512² · 20 步，约 35 秒）。不用守着，跑完自动贴上。";
+      } else if (pinnedTxt) {
+        rt.textContent = "底句是锁住的：「" + pinnedTxt + "」—— 每次跑都用它。想让它每跑一次换一个主体，点「改」换回随机。";
+      } else if (usedTxt) {
+        rt.textContent = "这张样图的底句是「" + usedTxt + "」（每次跑都重新抽一句，只有骨架是那个变量）。";
+      } else {
+        rt.textContent = "还没跑过样图。跑一张会随机抽一句底句（每次不同）—— 底句固定的话，每条配方的样图都长一个主体，就看不出骨架做了什么。";
+      }
+      paper.appendChild(rt);
+    }
+
+    // 正向：骨架是这套栈里唯一的杠杆
+    var ps1 = document.createElement("div");
+    ps1.className = "ps";
+    var h1 = document.createElement("h5");
+    h1.textContent = "正向骨架 · 接在你的提示词后面";
+    ps1.appendChild(h1);
+    var t1 = document.createElement("div");
+    t1.className = "txt";
+    t1.textContent = s.posSuffix || "（这条没有骨架 —— 解算退回默认那套）";
+    ps1.appendChild(t1);
+    var n1 = document.createElement("p");
+    n1.className = "psnote";
+    var skNote;
+    if (semi) skNote = "但这条只做了一半 —— " + semi.replace("半后处理 · 还差：", "还差 ") + "，提示词给不出那一步。";
+    else if (s.status === "custom") skNote = "这条是你自己写的；想改就点下面的「改」，改完立刻生效（不用重跑样图）。";
+    else skNote = "正向骨架是唯一的风格杠杆（cfg 1.0 下负向不生效）。";
+    n1.textContent = s.posSuffix
+      ? "出图时它会被拼在你写的那句后面。" + skNote
+      : "选它不会改变出图 —— 解算退回默认串，跟「默认」那条一模一样。";
+    ps1.appendChild(n1);
+    paper.appendChild(ps1);
+
+    // 负向：删词只作记录，必须标「不参与采样」
+    var ps2 = document.createElement("div");
+    ps2.className = "ps";
+    var h2 = document.createElement("h5");
+    h2.textContent = "负向串 · 已解算";
+    ps2.appendChild(h2);
+    var off = document.createElement("p");
+    off.className = "off";
+    off.textContent = "cfg = 1.0 · 不参与采样";
+    ps2.appendChild(off);
+    var t2 = document.createElement("div");
+    t2.className = "txt neg";
+    var drop = {};
+    (s.dropNeg || []).forEach(function (w) { drop[w] = 1; });
+    var words = NEG_WORDS.slice();
+    (s.dropNeg || []).forEach(function (w) { if (words.indexOf(w) < 0) words.push(w); });
+    if (!words.length) {
+      t2.textContent = "（原始词表没从管线侧拉起来，只知道这条移除了 " + (s.dropNeg || []).length + " 个词）";
+    } else {
+      words.forEach(function (w, i) {
+        if (i) t2.appendChild(document.createTextNode("，"));
+        if (drop[w]) {
+          var d = document.createElement("del");
+          d.textContent = w;
+          t2.appendChild(d);
+        } else t2.appendChild(document.createTextNode(w));
+      });
+    }
+    ps2.appendChild(t2);
+    var n2 = document.createElement("p");
+    n2.className = "psnote";
+    n2.textContent = s.status === "custom"
+      ? "自定义配方不碰负向串 —— 上面那串就是内置的默认串，一个词都没动。界面上也没给你改它的地方：cfg = 1.0 下它不生效，给了栏位等于教你用一个没用的开关。"
+      : ("这些词在这条配方里被移除过。出图台用 cfg = 1.0，负向支被乘 0，"
+         + "删词对画面没有影响 —— 这里只是记录这条配方对原始串做了什么，方便核对，不代表它改变了出图结果。");
+    ps2.appendChild(n2);
+    paper.appendChild(ps2);
+  }
+
+  /** 过审：判一条。记完自动跳到下一条没判过的 ——
+      过审是「一屏一条往下点」的活，判完还要自己找下一条，58 条就散了。 */
+  function judge(id, verdict) {
+    apiFetch("/review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: id, verdict: verdict || "" }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || !d.ok) { hint("判定没记上：" + ((d && d.error) || "未知"), true); return; }
+        REVIEWS = d.reviews || REVIEWS;
+        if (!verdict) { renderLib(); hint("判定撤掉了，这条回到「没判过」"); return; }
+        var next = nextUnreviewed(id);
+        if (!next) {
+          lib.sel = null;
+          renderLib();
+          hint("这一批都判完了 · 共 " + REVIEWS.total + " 条有判定");
+          return;
+        }
+        lib.sel = next.id;
+        renderLib();
+        hint("记下了「" + REVIEW_LABEL[verdict] + "」 · 下一条：「" + next.name + "」");
+      })
+      .catch(function (e) { hint("判定没记上：" + ((e && e.message) || e), true); });
+  }
+
+  /** 下一条还没判过的：在当前筛选结果里从 current 往后找，绕回头。 */
+  function nextUnreviewed(currentId) {
+    var rows = libRows();
+    var idx = rows.map(function (s) { return s.id; }).indexOf(currentId);
+    var start = idx < 0 ? 0 : idx + 1;
+    for (var k = 0; k < rows.length; k++) {
+      var s = rows[(start + k) % rows.length];
+      if (s.id !== currentId && hasSample(s) && !verdictOf(s)) return s;
+    }
+    return null;
+  }
+
+  function openLibCompare(id) {
+    lib.backScroll = scroller().scrollTop;
+    lib.sel = id;
+    renderLib();
+    // 对比从这一段顶上开始看，别让人停在半截
+    var top = $("lib").getBoundingClientRect().top + scroller().scrollTop - 6;
+    scroller().scrollTop = Math.max(0, top);
+  }
+  function closeLibCompare() {
+    var t = lib.backScroll;
+    lib.sel = null;
+    renderLib();
+    // 返回保留滚动位置：网格高度没变（格子靠 aspect-ratio 定型），所以能落回原处
+    requestAnimationFrame(function () {
+      var sc = scroller();
+      var max = Math.max(0, sc.scrollHeight - sc.clientHeight);
+      sc.scrollTop = Math.min(t, max);
+    });
+  }
+  function useLib(s) {
+    pick(function () { cfg.style = s.id; });
+    hint("配方换成「" + s.name + "」"
+      + (s.posSuffix ? " · 骨架会接在你的提示词后面" : " · 它没有骨架，等于默认那套"));
+    lib.open = false;
+    lib.sel = null;
+    renderLib();
+  }
+  function renderLib() {
+    $("lib").classList.toggle("hidden", !lib.open);
+    if (!lib.open) return;
+    if (!TAX) {
+      var paper = $("libPaper");
+      paper.innerHTML = "";
+      var e = document.createElement("p");
+      e.className = "libempty";
+      var b = document.createElement("b");
+      b.textContent = "配方表没拉起来。";
+      e.appendChild(b);
+      e.appendChild(document.createTextNode("管线侧的 /styles 没应答，所以现在只有配方条上那条兵底（默认）。修好接口再点进来。"));
+      paper.appendChild(e);
+      $("libCnt").textContent = "";
+      return;
+    }
+    renderLibNav();
+    if (lib.form) renderLibForm();
+    else if (lib.sel) renderLibCompare();
+    else renderLibGrid();
+  }
+  /** 轮询里只改「当前这条」的标记，不重建网格 —— 每 3 秒重建一次会把图和滚动都抖没。 */
+  function markLibCurrent() {
+    var tiles = $("libPaper").querySelectorAll(".tile");
+    for (var i = 0; i < tiles.length; i++) {
+      tiles[i].classList.toggle("cur", tiles[i].dataset.id === cfg.style);
+    }
+  }
+
+  function chip(label, sub, on, fn, flag) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip" + (on ? " on" : "");
+    b.appendChild(document.createTextNode(label));
+    if (sub) { var s = document.createElement("span"); s.className = "sub"; s.textContent = sub; b.appendChild(s); }
+    if (flag) { var f = document.createElement("span"); f.className = "flag"; f.textContent = flag; b.appendChild(f); }
+    b.addEventListener("click", fn);
+    return b;
+  }
+
+  function renderControls() {
+    $("controls").classList.toggle("hidden", !open.controls);
+    $("advBody").classList.toggle("hidden", !open.adv);
+    $("advOpen").textContent = open.adv ? "高级 ˅" : "高级 ›";
+    if (!open.controls) return;
+    if (!ctlDirty) return;
+    ctlDirty = false;
+
+    // 线路：本机探到几条就几条。只有一条时不占地方（首屏那行读态还在）。
+    var gl = $("grpLine"), cl = $("cLine");
+    if (LINES.length > 1) {
+      gl.classList.remove("hidden");
+      cl.innerHTML = "";
+      LINES.forEach(function (l) {
+        var b = chip(shortLine(l), l.dit || null, cfg.line === l.id, function () {
+          pick(function () { cfg.line = l.id; });
+        }, l.confidence ? "· " + l.confidence : null);
+        b.title = (l.label || l.id) + (l.ditName ? "\n" + l.dit + "( " + l.ditName + " )" : "") + ((l.evidence || []).length ? "\n" + l.evidence.join("\n") : "");
+        cl.appendChild(b);
+      });
+    } else {
+      gl.classList.add("hidden");
+    }
+
+    // 风格不在这儿了（2026-10-12 审美重置 v2）：挑风格要看图，
+    // 63 条铺在参数区里是 32 行、把「出图」按钮顶到看不见的地方。
+    // 现在走配方条上那颗「浏览」→ 配方库（.libsec，三列图墙 + 原地对比）。
+    // 画幅：比例片，不给数字框
+    var cr = $("cRatio"); cr.innerHTML = "";
+    RATIOS.forEach(function (r) {
+      cr.appendChild(chip(r.name, r.sub || dimLabel(r), cfg.ratio === r.id, function () {
+        pick(function () { cfg.ratio = r.id; });
+      }));
+    });
+
+    // 步数三档，每档标预计耗时（按当前画幅折算）
+    var cst = $("cSteps"); cst.innerHTML = "";
+    STEPS.forEach(function (s) {
+      cst.appendChild(chip(s.name, s.v + " 步 · 约 " + shortSec(estSec(s.v, cfg.ratio)), cfg.steps === s.v, function () {
+        pick(function () { cfg.steps = s.v; });
+      }));
+    });
+
+    // 种子：两个动作，不给数字
+    var csd = $("cSeed"); csd.innerHTML = "";
+    csd.appendChild(chip("随机", null, cfg.seedMode === "random", function () {
+      pick(function () { cfg.seedMode = "random"; });
+    }));
+    csd.appendChild(chip("沿用上一张", cfg.lastSeed != null ? fmtSeed(cfg.lastSeed) : "还没有上一张",
+      cfg.seedMode === "last", function () {
+        if (cfg.lastSeed == null) return;
+        pick(function () { cfg.seedMode = "last"; });
+      }));
+
+    // 结构实化
+    var sw = $("swShift");
+    sw.className = (cfg.shift && SHIFT_WIRED) ? "on" : "";
+    sw.disabled = !SHIFT_WIRED;
+    sw.setAttribute("aria-pressed", (cfg.shift && SHIFT_WIRED) ? "true" : "false");
+    $("swShiftTxt").innerHTML = !SHIFT_WIRED
+      ? "<b>暂不开放</b> · 这一位由管线侧定（当前模板：不挂），不摆给你拧"
+      : (cfg.shift ? "<b>开</b> · 结构块更实、整体约暗 2%" : "<b>关</b> · 模板原样");
+    $("neg").value = cfg.negative;   // 只在重建时写，否则打字时会被 3 秒一次的轮询打断
+  }
+
+  /** 她按下一枚决定：标记为「动过」，并立刻回显。 */
+  function pick(mut) {
+    mut();
+    touched = true;
+    ctlDirty = true;
+    renderControls();
+    syncButton();
+    renderRecipeRead();
+  }
+
+  function syncButton() {
+    var r = ratioById(cfg.ratio);
+    $("goSub").textContent = dimLabel(r) + " · " + cfg.steps + " 步 · 约 " + shortSec(estSec(cfg.steps, cfg.ratio));
+  }
+
+  /* ── 渲染总入口 ───────────────────────────────────────── */
+  function render(d) {
+    var online = d.ok !== false && d.service && d.service.online;
+    setService(online, d.service, d.error);
+    // 灯带自己也有状态：出图时热起来，连不上时冷下去
+    $("lamp").classList.toggle("cold", !online);
+    $("lamp").classList.toggle("hot", !!d.running);
+    runningId = d.running ? d.running.job : null;
+
+    if (d.running) {
+      $("pulse").className = "pulse run";
+      var rj = d.running;
+      var rr = (rj.width && rj.height) ? rj : ratioById(cfg.ratio);
+      $("pulse").style.setProperty("--stepSec",
+        Math.max(0.9, (rr.w * rr.h / BASE_MP) * SEC_PER_STEP) + "s");
+      renderField(rj);
+      renderProgress(rj);
+    } else {
+      $("pulse").className = "pulse " + (online ? "on" : "off");
+      $("pulse").style.removeProperty("--stepSec");
+      renderProgress(null);
+      disarmCancel();   // 没在跑就把「再点一下」那把火上浇了
+      // 曝光区显示什么：最新那条说了算。**失败的也要露脸** ——
+      // 从前失败只留一行 hint，一滑就没了，跟「失败态是一等公民」正好相反。
+      var rec = d.recent || [];
+      var newest = rec.filter(function (j) { return j.status === "success" && (j.files || []).length; })[0];
+      var newestFail = rec.filter(function (j) { return j.status === "failed"; })[0];
+      var failIsNewer = newestFail && (!newest || rec.indexOf(newestFail) < rec.indexOf(newest));
+      if (!online) { renderEmpty(false, d.error); shownJob = null; }
+      else if (failIsNewer) renderFail(newestFail);
+      else if (newest) renderShot(newest);
+      else { renderEmpty(true, null); shownJob = null; }
+    }
+
+    // 排队一行
+    var pend = d.pending || [];
+    var ql = $("queueLine");
+    ql.classList.toggle("hidden", !pend.length);
+    if (pend.length) {
+      ql.innerHTML = "";
+      var t = document.createElement("span"); t.className = "tag"; t.textContent = "排队";
+      var q = document.createElement("span"); q.className = "q";
+      q.textContent = pend.length + " 张 · " + (pend[0].prompt || "(无提示词)");
+      ql.appendChild(t); ql.appendChild(q);
+    }
+
+    var recent = d.recent || [];
+    if (recent[0]) lastJob = recent[0];
+    if (lastJob && lastJob.seed != null) cfg.lastSeed = lastJob.seed;
+
+    // 新出炉的一张：把「决定」同步成它用的那套（她动过就不再覆盖）
+    var fresh = recent.filter(function (j) { return j.status === "success"; })[0];
+    if (fresh && fresh.job !== cfgSynced) {
+      cfgSynced = fresh.job;
+      if (!touched) { syncFromJob(fresh); ctlDirty = true; syncButton(); }
+    }
+
+    $("rerun").disabled = !lastJob;
+    $("rerun").classList.toggle("hidden", !lastJob);   // 没有上一张就别留个灰块在那儿
+    renderControls();
+    renderRecipeRead();
+    renderRack(recent);
+    // 自定义配方那张样图跑完没有：对账时顺手看，成了就落盘
+    watchSample(d);
+    if (lib.open) markLibCurrent();
+  }
+
+  function tick() {
+    apiFetch("/status", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) { render(d); })
+      .catch(function (e) { setService(false, null, String(e && e.message || e)); });
+  }
+
+  /* ── 体检：这台机器装了什么、我能给它跑哪条线 ─────────────
+     只读、不出图、不花钱。判线在 lib/adapt.mjs 里，界面只显示结果。 */
+  var LINES = [];
+  var envPlan = null;
+  var envTries = 0;
+  function loadEnv() {
+    envTries++;
+    apiFetch("/env", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || !d.ok) throw new Error((d && d.error) || "体检失败");
+        envPlan = d;
+        LINES = d.lines || [];
+        envProbing = false;
+        if (!cfg.line) cfg.line = d.chosen || null;
+        ctlDirty = true;
+        renderControls();
+        renderRecipeRead();
+        renderEnv();
+      })
+      .catch(function () {
+        // ComfyUI 可能还没起来，退避重试；不然后开机器就永远显示「体检中」。
+        if (envTries >= 3) envProbing = false;
+        if (envTries < 40) setTimeout(loadEnv, 4000);
+      });
+  }
+
+  /** 风格表从管线侧拉。拉不到就只用内置的默认那一条 —— 不编风格。
+      一并收下分类树、样图清单、负向词表：配方库要它们（否则 63 条无从分组、
+      对比视图也没法把「删了哪几个词」摊出来）。 */
+  function loadStyles() {
+    return apiFetch("/styles", { cache: "no-store" })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d || !d.ok || !(d.styles || []).length) return;
+        TAX = d.taxonomy || null;
+        SAMPLES = d.samples || {};
+        NEG_WORDS = d.negWords || [];
+        SAMPLE_PROMPT = d.samplePrompt || SAMPLE_PROMPT;
+        SAMPLE_PROMPTS = d.samplePrompts || [];
+        // 自定义那一档的形状管线侧已经给好了（customForUi 对齐了内置那套字段），界面不再转一道
+        CUSTOM = d.custom || [];
+        REVIEWS = d.reviews || { items: {}, counts: { ok: 0, no: 0, unsure: 0 }, total: 0 };
+        STYLES = d.styles.map(function (s) {
+          return {
+            id: s.id, name: s.name, status: s.status, note: s.note,
+            cat: s.cat, catName: s.catName, sub: s.sub, tags: s.tags || {},
+            semi: s.semi || [],
+            // ⚠ 这个 map 是**白名单**：管线侧新加的字段不写在这儿就会被静静丢掉。
+            //   sampleBase 就这么丢过一次 —— 表现是过审时底句那行显示“记录里没写”。
+            sampleBaseText: s.sampleBaseText || "",
+            dropNeg: s.dropNeg || [], posSuffix: s.posSuffix || "",
+            samples: SAMPLES[s.id] || [],
+          };
+        });
+        // 正在用的那条要是没了（被删、或从来没存在过），退回默认 ——
+        // 不然配方条会一直挂着一个不存在的名字，而她不知道它已经不在表里了。
+        var exists = CUSTOM.some(function (s) { return s.id === cfg.style; })
+          || STYLES.some(function (s) { return s.id === cfg.style; });
+        if (!exists) cfg.style = "default";
+        $("rBrowse").textContent = "浏览 " + (STYLES.length + CUSTOM.length);
+        ctlDirty = true;
+        renderControls();
+        renderRecipeRead();
+        renderLib();
+      })
+      .catch(function () { /* 兵底就是内置那一条 */ });
+  }
+
+  /* ── 提交 ───────────────────────────────────────────── */
+  function payload(prompt) {
+    var r = ratioById(cfg.ratio);
+    var body = {
+      prompt: prompt,
+      width: r.w,
+      height: r.h,
+      steps: cfg.steps,
+      recipe: styleById(cfg.style).name,
+    };
+    if (cfg.line) body.line = cfg.line;   // 走哪条线由后端拼图，界面只报决定
+    if (cfg.seedMode === "last" && cfg.lastSeed != null) body.seed = cfg.lastSeed;
+    if (cfg.negative.trim()) body.negative = cfg.negative.trim();
+    if (SHIFT_WIRED) body.shift = cfg.shift;
+    body.style = cfg.style;   // 只给 id；正/负向串由管线侧解算
+    return body;
+  }
+
+  function submit(prompt) {
+    if (!prompt) { hint("先写一句提示词", true); return; }
+    $("go").disabled = true; $("rerun").disabled = true;
+    hint("提交中…");
+    apiFetch("/submit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload(prompt)),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d && d.ok) {
+          $("p").value = ""; autoGrow();
+          touched = false;
+          hint("已入队 " + String(d.job).slice(0, 8) + " · " + d.size + " / " + d.steps + " 步");
+          tick();
+        } else {
+          hint("提交失败：" + ((d && d.error) || "未知"), true);
+        }
+      })
+      .catch(function (e) { hint("提交失败：" + (e && e.message || e), true); })
+      .finally(function () { $("go").disabled = false; $("rerun").disabled = !lastJob; });
+  }
+
+  $("compose").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    submit($("p").value.trim());
+  });
+  // 回车出图，Shift+Enter 换行
+  $("p").addEventListener("keydown", function (ev) {
+    if (ev.key !== "Enter" || ev.shiftKey) return;
+    ev.preventDefault();
+    submit($("p").value.trim());
+  });
+  // 提示词框自己长高，不要那个拖拽小角
+  $("p").addEventListener("input", autoGrow);
+  function autoGrow() {
+    var t = $("p");
+    t.style.height = "auto";
+    t.style.height = Math.min(132, Math.max(52, t.scrollHeight)) + "px";
+  }
+  // 照原样再跑：走 /rerun —— 账本里存着原图就原样重投，没存才退回照参数重建。
+  // 从前是拿上一张的参数重新拼一遍，自定义管线的图那样重跑出来的不是同一张。
+  $("rerun").addEventListener("click", function () {
+    if (!lastJob) return;
+    var btn = $("rerun");
+    btn.disabled = true; $("go").disabled = true;
+    hint("照上一张再入队…");
+    apiFetch("/rerun", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job: lastJob.job }),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d && d.ok) {
+          hint("已入队 " + String(d.job).slice(0, 8) + (d.mode === "graph" ? " · 照原样" : " · 照参数重建"));
+          tick();
+        } else {
+          hint("重跑失败：" + ((d && d.error) || "未知"), true);
+        }
+      })
+      .catch(function (e) { hint("重跑失败：" + (e && e.message || e), true); })
+      .finally(function () { btn.disabled = false; $("go").disabled = false; });
+  });
+
+  /* ── 取消：两击确认 ─────────────────────────────────────
+     误触一下会毁掉一张已经跑了几分钟的图，所以第一下只是「上膛」，四秒内不确认就退膛。 */
+  var cancelArm = 0;
+  var cancelTimer = null;
+  function disarmCancel() {
+    cancelArm = 0;
+    if (cancelTimer) { clearTimeout(cancelTimer); cancelTimer = null; }
+    var b = $("cancel");
+    b.classList.remove("arm");
+    b.textContent = "取消";
+    b.disabled = false;
+  }
+  $("cancel").addEventListener("click", function () {
+    var btn = $("cancel");
+    if (!cancelArm) {
+      cancelArm = Date.now();
+      btn.classList.add("arm");
+      btn.textContent = "再点一下";
+      cancelTimer = setTimeout(disarmCancel, 4000);
+      return;
+    }
+    if (cancelTimer) { clearTimeout(cancelTimer); cancelTimer = null; }
+    btn.disabled = true;
+    btn.textContent = "取消中…";
+    apiFetch("/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(runningId ? { job: runningId } : {}),
+    })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (d && d.ok) {
+          btn.textContent = d.vramFreed ? "已取消 ✓" : "已取消";
+          hint("已取消" + (d.mode === "pending" ? "（排队中的那条）" : "") + (d.vramFreed ? " · 显存已清" : ""));
+          tick();
+        } else {
+          hint("取消失败：" + ((d && d.error) || "未知"), true);
+          disarmCancel();
+        }
+      })
+      .catch(function (e) { hint("取消失败：" + (e && e.message || e), true); disarmCancel(); });
+  });
+
+  $("rToggle").addEventListener("click", function () { open.controls = !open.controls; ctlDirty = true; renderControls(); renderRecipeRead(); });
+
+  /* 配方库的七个入口。导航只做收窄，网格始终在场 —— 顺序随意，没层级要走。 */
+  $("rBrowse").addEventListener("click", function () {
+    lib.open = !lib.open;
+    if (!lib.open) lib.sel = null;
+    renderLib();
+    if (lib.open) {
+      var top = $("lib").getBoundingClientRect().top + scroller().scrollTop - 6;
+      scroller().scrollTop = Math.max(0, top);
+    }
+  });
+  $("libClose").addEventListener("click", function () { lib.open = false; lib.sel = null; renderLib(); });
+  $("libOnly").addEventListener("click", function () { lib.only = !lib.only; lib.sel = null; renderLib(); });
+  $("libFilt").addEventListener("click", function () { lib.filtOpen = !lib.filtOpen; renderLib(); });
+  $("libClear").addEventListener("click", function () { lib.pick = {}; lib.sel = null; renderLib(); });
+  // 搜索框在 #libPaper 之外，renderLib 不会重建它，所以边打边筛不丢焦点
+  $("libQ").addEventListener("input", function () { lib.q = this.value; lib.sel = null; renderLib(); });
+  $("advOpen").addEventListener("click", function () { open.adv = !open.adv; renderControls(); });
+  // 体检面板的两个入口：配方条那行读态、面板自己那行结论
+  $("rLine").style.cursor = "pointer";
+  $("rLine").addEventListener("click", function () { toggleEnv(); });
+  $("envSum").addEventListener("click", function () { toggleEnv(); });
+  $("swShift").addEventListener("click", function () { cfg.shift = !cfg.shift; pick(function () {}); });
+  $("neg").addEventListener("input", function () { cfg.negative = this.value; touched = true; });
+
+  function hint(t, bad) {
+    var el = $("hint");
+    el.textContent = t || "";
+    el.className = bad ? "hint bad" : "hint";
+  }
+
+  /* ── 大图：滚轮缩放 / 拖动平移 / 双击复位 ─────────────── */
+  var lb = $("lightbox"), lbImg = $("lbImg");
+  var natW = 0, natH = 0, scale = 1, tx = 0, ty = 0, dragging = false, sx = 0, sy = 0, curJob = null;
+
+  function applyTf() {
+    lbImg.style.transform =
+      "translate(-50%,-50%) translate(" + tx + "px," + ty + "px) scale(" + scale + ")";
+  }
+  function fit() {
+    if (!natW || !natH) return;
+    var w = lb.clientWidth - 32, h = lb.clientHeight - 96;
+    scale = Math.max(0.05, Math.min(w / natW, h / natH, 1));
+    tx = 0; ty = 0; applyTf();
+  }
+  /* 大图那行的三个动作。
+     复制走 navigator.clipboard（manifest 已声明 clipboard-write）；
+     另存走 fetch 取 blob + <a download>——不把 surface 凭证塞进 URL，也让文件名可控。 */
+  function actBtn(label, fn) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = label;
+    b.addEventListener("click", function () { fn(b, label); });
+    return b;
+  }
+  function flash(btn, label, text) {
+    btn.textContent = text;
+    setTimeout(function () { btn.textContent = label; }, 1500);
+  }
+  /* 复制：三道，从最可能成功的那道往下退。
+     背景（2026-10-09 实测）：
+       · 宿主的总线**不收** clipboard.writeText（那是插件 UI 侧桥的词，卡页调不到）；
+       · navigator.clipboard 在卡片 iframe 里会被 Permissions Policy / 文档失焦拒掉。
+     所以先用 execCommand —— 它是同步的、能吃用户手势（点按钮就是手势），
+     在嵌帧里反而比 navigator 稳。三道全废也不说“复制失败”了事：
+     把文本搅出来让她自己 Ctrl+C。 */
+  function legacyCopy(text) {
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.top = "-1000px";
+      ta.style.left = "-1000px";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      var done = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return !!done;
+    } catch (e) { return false; }
+  }
+  function manualCopy(text, btn, label) {
+    var lb2 = $("lightbox");
+    var old = lb2.querySelector(".manwrap");
+    if (old) old.parentNode.removeChild(old);
+    var wrap = document.createElement("span");
+    wrap.className = "manwrap";
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("spellcheck", "false");
+    wrap.appendChild(ta);
+    lb2.querySelector(".cap").appendChild(wrap);
+    ta.focus();
+    ta.select();
+    flash(btn, label, "已选中 · 按 Ctrl+C");
+  }
+  function copyText(text, btn, label, emptyText) {
+    if (!text) { flash(btn, label, emptyText || "没有可复制的"); return; }
+    if (legacyCopy(text)) { flash(btn, label, "已复制"); return; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { flash(btn, label, "已复制"); },
+        function () { manualCopy(text, btn, label); }
+      );
+      return;
+    }
+    manualCopy(text, btn, label);
+  }
+  function saveImage(j, btn, label) {
+    var raw = (j.files && j.files[0] && j.files[0].name) || "image.png";
+    var name = String(j.job).slice(0, 8) + "_" + String(raw).split(/[\\/]/).pop();
+    flash(btn, label, "取图中…");
+    apiFetch("/image?job=" + encodeURIComponent(j.job) + "&i=0")
+      .then(function (r) { if (!r.ok) throw new Error("取图失败"); return r.blob(); })
+      .then(function (blob) {
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        a.href = url; a.download = name;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 5000);
+        // 只敢说到“发起”：blob 的 <a download> 能不能落盘、落到哪，是这个壳子的事，
+        // click() 不会告诉我结果，所以不写“已另存”。
+        flash(btn, label, "已发起下载");
+      })
+      .catch(function () { flash(btn, label, "另存失败"); });
+  }
+
+  function openLightbox(j) {
+    curJob = j;
+    lbImg.onload = function () { natW = lbImg.naturalWidth; natH = lbImg.naturalHeight; fit(); };
+    natW = 0; natH = 0;
+    lbImg.src = imgSrc("/image?job=" + encodeURIComponent(j.job) + "&i=0");
+
+    var cap = $("lbCap");
+    cap.innerHTML = "";
+    var b = document.createElement("b");
+    b.textContent = j.prompt || "(无提示词)";
+    cap.appendChild(b);
+
+    var bits = [];
+    var submitted = (j.width && j.height) ? dimText(j.width, j.height) : (j.size || null);
+    if (submitted) bits.push(submitted);
+    if (j.actualWidth && j.actualHeight) {
+      var actual = dimText(j.actualWidth, j.actualHeight);
+      if (actual !== submitted) bits.push("实出 " + actual);
+    }
+    if (j.steps) bits.push(stepText(j));
+    if (j.seed != null) bits.push("seed " + j.seed);
+    if (j.recipe) bits.push(j.recipe);
+    if (j.elapsedSec) bits.push(sec(j.elapsedSec));
+    var meta = document.createElement("i");
+    meta.textContent = bits.join("  ·  ");
+    cap.appendChild(meta);
+
+    var act = document.createElement("span");
+    act.className = "act";
+    act.appendChild(actBtn("复制提示词", function (btn, label) {
+      copyText(j.prompt || "", btn, label);
+    }));
+    act.appendChild(actBtn("复制路径", function (btn, label) {
+      var p = (j.files && j.files[0] && j.files[0].path) || "";
+      copyText(p, btn, label, "这张还没落到本地");
+    }));
+    act.appendChild(actBtn("另存", function (btn, label) { saveImage(j, btn, label); }));
+    cap.appendChild(act);
+
+    var tip = document.createElement("i");
+    tip.textContent = "滚轮缩放 · 拖动平移 · 双击复位 · Esc 关闭";
+    cap.appendChild(tip);
+
+    lb.classList.add("on");
+  }
+  function closeLightbox() {
+    lb.classList.remove("on");
+    lbImg.removeAttribute("src");
+    scale = 1; tx = 0; ty = 0; curJob = null;
+  }
+
+  lb.addEventListener("wheel", function (e) {
+    if (!lb.classList.contains("on") || !natW) return;
+    e.preventDefault();
+    var k = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    var next = Math.max(0.05, Math.min(12, scale * k));
+    k = next / scale;
+    var r = lb.getBoundingClientRect();
+    var dx = e.clientX - r.left - r.width / 2;
+    var dy = e.clientY - r.top - r.height / 2;
+    tx = tx + dx * (1 - k);
+    ty = ty + dy * (1 - k);
+    scale = next;
+    applyTf();
+  }, { passive: false });
+
+  lbImg.addEventListener("mousedown", function (e) {
+    dragging = true; sx = e.clientX - tx; sy = e.clientY - ty;
+    lbImg.classList.add("drag"); e.preventDefault();
+  });
+  window.addEventListener("mousemove", function (e) {
+    if (!dragging) return;
+    tx = e.clientX - sx; ty = e.clientY - sy; applyTf();
+  });
+  window.addEventListener("mouseup", function () {
+    dragging = false; lbImg.classList.remove("drag");
+  });
+  lbImg.addEventListener("dblclick", function (e) { e.preventDefault(); fit(); });
+  lb.addEventListener("mousedown", function (e) { if (e.target === lb) closeLightbox(); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    if (lb.classList.contains("on")) closeLightbox();
+  });
+
+  /* ── 启动 ───────────────────────────────────────────── */
+  renderControls();
+  syncButton();
+  renderRecipeRead();
+  renderLib();
+  loadEnv();
+  loadStyles();
+  tick();
+  setInterval(tick, 3000);
+})();
+</script>
+</body>
+</html>
